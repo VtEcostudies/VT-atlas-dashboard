@@ -22,6 +22,7 @@ library(VTatlas)
 library(mapview)
 library(leaflet)
 library(leafpop)
+library(shinyWidgets)
 
 # All the data are created using the create_data_files.R script #
 # the data are populated into input_data #
@@ -52,7 +53,19 @@ names(towns_class_sf) <- c("Town","Total_spp","Animalia","Plantae","Fungi","Prot
 sppCumm <- read.csv("input_data/sppCumm.csv")
 
 date_of_data_acquisition <- file.info("input_data/num_spp.csv")$ctime
+
 data_citation <- readLines("input_data/data_citation.R")
+
+# read in class information 
+overall_classes <- read.csv("input_data/summary_of_species_classes.csv")
+
+# remove rows without class information
+overall_classes <- overall_classes[overall_classes$class!="",]
+names(overall_classes) <- c("row","Class","Kingdom","Species observed")
+summarizeAnimals <- overall_classes[overall_classes$Kingdom=="Animalia",]
+summarizeAnimals <- head(summarizeAnimals[order(summarizeAnimals$"Species observed",decreasing = TRUE),], 10)
+summarizePlants <- overall_classes[overall_classes$Kingdom=="Plantae",]
+summarizePlants <- head(summarizePlants[order(summarizePlants$"Species observed",decreasing = TRUE),], n=10)
 
 ################################################################################
 #
@@ -63,40 +76,42 @@ data_citation <- readLines("input_data/data_citation.R")
 
 ui <- bootstrapPage(
 #  div(class = "container-fluid",
-  navbarPage(theme = shinytheme("flatly"), collapsible = FALSE,
-             HTML('<a style="text-decoration:none;cursor:default;color:#FFFFFF;" class="active" href="#">VT Atlas of Life</a>'), id="nav",
-             windowTitle = "Biodiversity", 
-             
+  navbarPage(theme = shinytheme("flatly"), 
+             collapsible = FALSE,
+             HTML('<img style="text-decoration:none;cursor:default;color:#FFFFFF;" class="active" href="#">VT Atlas of Life</a>'), 
+             windowTitle = "VT Atlas Dashboard", # name of tab in browser
              tabPanel("Biodiversity",
-
-                      div(class="outer", tags$head(includeCSS("vt_dashboard.css")),
-                          
-                       mapviewOutput("county_Plot", width = "100%", height = "100%"),
-                          
-                          absolutePanel(id = "controls", class = "panel panel-default",
-                                        top = 300, left = 400, width = "25%", fixed = TRUE,
-                                        draggable = TRUE, height = "auto",
-                                        
-                                        span(tags$i(h1("Atlas of Life by the numbers"), align = "center"), style="color:#045a8d"),
-                                        h3(textOutput("num_species"), align = "center"),
-                                        h4(textOutput("num_obs"), align = "center"),
-                                        h4(textOutput("num_observers"), align = "center"),
-                                        plotOutput("spp_accum", height = 300),
-                                        # plotOutput("SppTIME_plot", height = 300),
-                                        span(("These data are preliminary"),align = "left", style = "font-size:120%")
-                                        #span(("These data are preliminary."),align = "left", style = "font-size:80%")
-                                        
-                                        )
-                                     
+                   sidebarLayout(
+                     sidebarPanel(width = 3,
+                       verticalLayout(span(tags$i(h2("Taxa breakdown"), align = "center"), style="color:#045a8d"),
+                         wellPanel(span(h3("Animals"), align = "center"),
+                         tableOutput("summaryAnimal")),
+                         wellPanel(span(h3("Plants"), align = "center"),
+                         tableOutput("summaryPlant"))
                        ),
-                                        
-                      fluidRow(
-                        column(width = 2, 
-                               offset = 0,
-                               infoBoxOutput("speciesbox_animals", 
-                                             width = 4)
-                               )
-                      )
+                     ),
+                     mainPanel(
+                       div(class="outer", tags$head(includeCSS("vt_dashboard.css")),
+                           
+                           mapviewOutput("county_Plot", width = "100%", height = "100%"),
+                           
+                           absolutePanel(id = "controls", class = "panel panel-default",
+                                         top = 300, left = 550, width = "25%", fixed = TRUE,
+                                         draggable = TRUE, height = "auto",
+                                         
+                                         span(tags$i(h1("Atlas of Life by the numbers"), align = "center"), style="color:#045a8d"),
+                                         h3(textOutput("num_species"), align = "center"),
+                                         h4(textOutput("num_obs"), align = "center"),
+                                         h4(textOutput("num_observers"), align = "center"),
+                                         plotOutput("spp_accum", height = 300),
+                                         # plotOutput("SppTIME_plot", height = 300),
+                                         span(("These data are preliminary"),align = "left", style = "font-size:120%")
+                                         #span(("These data are preliminary."),align = "left", style = "font-size:80%")
+                                         
+                           )
+                           )
+                     )
+                   )
                       
                       
                       # set the first fluid row for the left panel 
@@ -119,12 +134,17 @@ ui <- bootstrapPage(
                           
                           
              ),
-             tabPanel("Climate Change",
+             tabPanel("Climate Change"),
+             tabPanel("Species on the edge"),
+             tabPanel("Data source",
                       fluidRow(
                         column(12,
                                textOutput("data_citation"))
-                      )),
-             tabPanel("Species on the edge")
+                      ),
+                      fluidRow(
+                        column(1,offset = 10,
+                               textOutput("created_by"))
+                      ))
              )
 #  )
 )
@@ -144,12 +164,17 @@ output$num_obs <- renderText(paste("Total observations:", prettyNum(tot_obs, big
 output$num_observers <- renderText(paste("Observers:", prettyNum(num_obs, big.mark=",",scientific = FALSE)))
 output$data_update <- renderText(paste('Data acquired:', date_of_data_acquisition))
 output$data_citation <- renderText(data_citation)
+output$created_by <- renderText("Dashboard created by M. T. Hallworth")
 
 # RENDER BOX OUTPUT
 output$speciesbox_animals <- renderInfoBox({
   infoBox("Progress", paste0(25 + 8, "%"), icon = icon("list"),
     color = "purple", fill = TRUE)
 })
+
+# RENDER TABLE OUTPUTS
+output$summaryAnimal <- renderTable({summarizeAnimals[,c("Class","Species observed")]})
+output$summaryPlant <- renderTable({summarizePlants[,c("Class","Species observed")]})
 
 # RENDER PLOTS
 output$spp_accum <- renderPlot({
@@ -160,6 +185,9 @@ output$spp_accum <- renderPlot({
        xlab = "Year",
        main = "Species Accumulation Curve")
 })
+
+
+output$plot1 <- renderPlot({plot(rnorm(100))})
 
 # RENDER MAPS
 #generate a map

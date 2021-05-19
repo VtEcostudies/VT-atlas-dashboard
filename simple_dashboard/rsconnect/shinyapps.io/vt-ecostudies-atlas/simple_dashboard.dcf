@@ -5,10 +5,10 @@ account: vt-ecostudies-atlas
 server: shinyapps.io
 hostUrl: https://api.shinyapps.io/v1
 appId: 4140238
-bundleId: 4613504
+bundleId: 4614210
 url: https://vt-ecostudies-atlas.shinyapps.io/simple_dashboard/
-when: 1621377568.43742
-lastSyncTime: 1621377568.43742
+when: 1621396281.34075
+lastSyncTime: 1621396281.34075
 asMultiple: FALSE
 asStatic: FALSE
 ignoredFiles: app_old.R|create_data_files.R|first_app.R
