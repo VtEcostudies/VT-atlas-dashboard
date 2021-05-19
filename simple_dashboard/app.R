@@ -53,6 +53,7 @@ sppCumm <- read.csv("input_data/sppCumm.csv")
 
 date_of_data_acquisition <- file.info("input_data/num_spp.csv")$ctime
 data_citation <- readLines("input_data/data_citation.R")
+
 ################################################################################
 #
 #
