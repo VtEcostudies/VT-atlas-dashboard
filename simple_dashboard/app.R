@@ -67,6 +67,16 @@ summarizeAnimals <- head(summarizeAnimals[order(summarizeAnimals$"Species observ
 summarizePlants <- overall_classes[overall_classes$Kingdom=="Plantae",]
 summarizePlants <- head(summarizePlants[order(summarizePlants$"Species observed",decreasing = TRUE),], n=10)
 
+
+source("plotSppAccum.R")
+kingdom_spp_val <- readRDS("input_data/Kingdom_spp_accum.rds")
+kingdom_samp_val <- readRDS("input_data/Kingdom_samp_accum.rds")
+
+class_spp_val <- readRDS("input_data/Class_spp_accum.rds")
+class_samp_val <- readRDS("input_data/Class_samp_accum.rds")
+
+class_ABC <- dimnames(class_spp_val)[[3]]
+class_ABC <- class_ABC[order(class_ABC)]
 ################################################################################
 #
 #
@@ -91,6 +101,14 @@ ui <- bootstrapPage(
                        ),
                      ),
                      mainPanel(
+                       fluidRow(
+                         column("", width = 3,
+                                selectInput('maptoshow',
+                                            label = "Select a map",
+                                            choices = c("County","Town","Survey block"),
+                                            selected = "Town")
+                                )
+                       ),
                        div(class="outer", tags$head(includeCSS("vt_dashboard.css")),
                            
                            mapviewOutput("county_Plot", width = "100%", height = "100%"),
@@ -134,6 +152,52 @@ ui <- bootstrapPage(
                           
                           
              ),
+             tabPanel("State of Biodiversity",
+                      
+                      mainPanel(
+                        fluidRow(
+                          column("", width = 2,
+                                 selectInput('kingdomSpp',
+                                             label = "Select a Kingdom",
+                                             choices = c("Animalia","Plantae","Fungi","Protozoa","Bacteria","Chromista","Archaea","Viruses"),
+                                             selected = "Animalia")),
+                          column("", width = 2, offset = 3,
+                                 selectInput('classSpp',
+                                             label = "Select a Class",
+                                             choices = class_ABC,
+                                             selected = "Aves"))
+                        ),
+                        fluidRow(
+                        column("", width = 3,
+                               plotOutput("Kingdom_AccumulationPlot")),
+                        column("", width = 3, offset = 3,
+                               plotOutput("Class_AccumulationPlot"))
+                      ),
+                      fluidRow(
+                      column('', width = 2, offset = 2,
+                             numericInput('king_predictSamples',
+                                          "Number of samples for prediction:",
+                                          value = 1000,
+                                          min = 1,
+                                          max = 100000)
+                      ),
+                      column('', width = 2, offset = 2,
+                             numericInput('class_predictSamples',
+                                          "Number of samples for prediction:",
+                                          value = 1000,
+                                          min = 1,
+                                          max = 100000)
+                      )
+                      ),
+                      fluidRow(
+                        column("", width = 3,
+                               plotOutput("Kingdom_AccumulationPlot_predict")),
+                        column("", width = 3, offset = 3,
+                               plotOutput("Class_AccumulationPlot_predict"))
+                      )
+                      )
+                      ),
+                      
              tabPanel("Climate Change"),
              tabPanel("Species on the edge"),
              tabPanel("Data source",
@@ -186,6 +250,37 @@ output$spp_accum <- renderPlot({
        main = "Species Accumulation Curve")
 })
 
+# RENDER PLOTS
+output$Kingdom_AccumulationPlot <- renderPlot({
+
+  plotSppAccum(data_array = kingdom_spp_val,
+               sample_array = kingdom_samp_val,
+               columnValue = input$kingdomSpp)
+})
+
+output$Class_AccumulationPlot <- renderPlot({
+  
+  plotSppAccum(data_array = class_spp_val,
+               sample_array = class_samp_val,
+               columnValue = input$classSpp)
+})
+
+
+output$Kingdom_AccumulationPlot_predict <- renderPlot({
+  
+  plotSppAccum(data_array = kingdom_spp_val,
+               sample_array = kingdom_samp_val,
+               columnValue = input$kingdomSpp,
+               predSamp = input$king_predictSamples)
+})
+
+output$Class_AccumulationPlot_predict <- renderPlot({
+  
+  plotSppAccum(data_array = class_spp_val,
+               sample_array = class_samp_val,
+               columnValue = input$classSpp,
+               predSamp = input$class_predictSamples)
+})
 
 output$plot1 <- renderPlot({plot(rnorm(100))})
 
@@ -193,7 +288,7 @@ output$plot1 <- renderPlot({plot(rnorm(100))})
 #generate a map
 output$county_Plot <- renderLeaflet({
   mapviewOptions(layers.control.pos = "bottomleft", legend.pos = "bottomright")
-                          M1 <- mapview(county_class_sf, 
+                        M1 <- mapview(county_class_sf, 
                                          layer.name = "County",
                                          zcol = "Total_spp",
                                          
@@ -209,8 +304,10 @@ output$county_Plot <- renderLeaflet({
                                                                      "Archaea",
                                                                      "Viruses",
                                                                      "incertae.sedis")),
-                                         label = "County: Total Species", legend = TRUE) 
-                          M2 <- mapview(towns_class_sf, 
+                                         label = "County: Total Species", legend = TRUE)
+                          
+
+                      M2 <- mapview(towns_class_sf, 
                                         layer.name = "Town",
                                         zcol = "Total_spp",
                                         
@@ -227,7 +324,8 @@ output$county_Plot <- renderLeaflet({
                                                                     "Archaea",
                                                                     "Viruses",
                                                                     "incertae.sedis")),
-                                        label = "Town: Total Species", legend = TRUE)  
+                                        label = "Town: Total Species", legend = TRUE)
+
      M3 <- mapview(block_class_sf, 
             layer.name = "Block",
             zcol = "Total_spp",
@@ -243,7 +341,7 @@ output$county_Plot <- renderLeaflet({
                                         "Viruses",
                                         "incertae.sedis")),
             label = "Survey block: Total species", legend = TRUE)
-     
+
      (M1+M2+M3)@map
                           })
 
@@ -264,6 +362,8 @@ output$survey_block_Plot <- renderLeaflet({
                                       "incertae.sedis")),
           label = "Survey block: Total species", legend = TRUE)@map
 })
+
+
 
 
 

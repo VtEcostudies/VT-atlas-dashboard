@@ -179,19 +179,14 @@ st_write(block_class_sf, "simple_dashboard/input_data/block_class_sf.shp", appen
 
 
 
+# here is a basic example of the species accumulation curves # 
+# Species accumulation files need to be run 
 
 
 
-
-
-
-
-
-
-
-
-
-
-
+plotSppAccum(data_array = spp_accum,
+             sample_array = samp_accum,
+             columnValue = "Insecta",
+             predSamp = 8000)
 
 
