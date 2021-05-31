@@ -62,8 +62,41 @@ write.csv(summary_classes, "simple_dashboard/input_data/summary_of_species_class
 # Write spatial data to file to read # 
 # These data are for the Biodiversity panel # 
 # COUNTIES #
-VT <- sf::st_read(Spatial_Db,
-                  "boundary")
+VT <- sf::st_read(GBIF_Db,
+                  "VTboundary_vtgis")
+
+# quick test for species numbers between buffered and unbuffered datadownlaods 
+spp_withoutBuffer <- dbGetQuery(GBIF_Db, 
+                  'SELECT "OBJECTID", count(distinct(species)) AS total_species
+                   FROM "VTboundary_vtgis"
+                   LEFT JOIN occurrence ON st_contains("VTboundary_vtgis".geometry,occurrence.geometry)
+                   GROUP BY "OBJECTID";')
+
+spp_withBuffer <- dbGetQuery(GBIF_Db, 
+                                'SELECT "OBJECTID", count(distinct(species)) AS total_species
+                   FROM "VTboundary_vtgis"
+                   LEFT JOIN occurrence_buffer ON st_contains("VTboundary_vtgis".geometry,occurrence_buffer.geometry)
+                   GROUP BY "OBJECTID";')
+
+# quick test for to see which species are different between buffered and unbuffered datadownlaods 
+sppList_withoutBuffer <- dbGetQuery(GBIF_Db, 
+                                'SELECT DISTINCT "species"
+                                 FROM "VTboundary_vtgis"
+                                 LEFT JOIN occurrence ON st_contains("VTboundary_vtgis".geometry,occurrence.geometry);')
+
+sppList_withBuffer <- dbGetQuery(GBIF_Db, 
+                             'SELECT DISTINCT "species"
+                                 FROM "VTboundary_vtgis"
+                                 LEFT JOIN occurrence_buffer ON st_contains("VTboundary_vtgis".geometry,occurrence_buffer.geometry);')
+
+
+sppList_withBuffer$species[!(sppList_withBuffer$species %in% sppList_withoutBuffer$species)] 
+
+
+county_class <-  sql_command)
+
+
+
 
 counties <- sf::st_read(GBIF_Db,
                         "counties")
@@ -176,17 +209,5 @@ block_class_sf[is.na(block_class_sf)] <- 0
 
 # Write to file #
 st_write(block_class_sf, "simple_dashboard/input_data/block_class_sf.shp", append = FALSE)
-
-
-
-# here is a basic example of the species accumulation curves # 
-# Species accumulation files need to be run 
-
-
-
-plotSppAccum(data_array = spp_accum,
-             sample_array = samp_accum,
-             columnValue = "Insecta",
-             predSamp = 8000)
 
 

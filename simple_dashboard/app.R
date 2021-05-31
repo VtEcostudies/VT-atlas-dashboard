@@ -23,6 +23,10 @@ library(mapview)
 library(leaflet)
 library(leafpop)
 library(shinyWidgets)
+library(lwgeom)
+
+source("plotSppAccum.R")
+source("predict_num_species.R")
 
 # All the data are created using the create_data_files.R script #
 # the data are populated into input_data #
@@ -31,6 +35,8 @@ library(shinyWidgets)
 #                           Data for the front page                            #
 #                                                                              #
 ################################################################################
+VTshape <- sf::st_read("input_data/VTboundary.shp")
+
 num_spp <- read.csv("input_data/num_spp.csv")
 
 num_obs <- read.csv("input_data/num_obs.csv")
@@ -68,7 +74,7 @@ summarizePlants <- overall_classes[overall_classes$Kingdom=="Plantae",]
 summarizePlants <- head(summarizePlants[order(summarizePlants$"Species observed",decreasing = TRUE),], n=10)
 
 
-source("plotSppAccum.R")
+
 kingdom_spp_val <- readRDS("input_data/Kingdom_spp_accum.rds")
 kingdom_samp_val <- readRDS("input_data/Kingdom_samp_accum.rds")
 
@@ -153,50 +159,72 @@ ui <- bootstrapPage(
                           
              ),
              tabPanel("State of Biodiversity",
-                      
-                      mainPanel(
-                        fluidRow(
-                          column("", width = 2,
-                                 selectInput('kingdomSpp',
-                                             label = "Select a Kingdom",
-                                             choices = c("Animalia","Plantae","Fungi","Protozoa","Bacteria","Chromista","Archaea","Viruses"),
-                                             selected = "Animalia")),
-                          column("", width = 2, offset = 3,
-                                 selectInput('classSpp',
-                                             label = "Select a Class",
-                                             choices = class_ABC,
-                                             selected = "Aves"))
-                        ),
-                        fluidRow(
-                        column("", width = 3,
-                               plotOutput("Kingdom_AccumulationPlot")),
-                        column("", width = 3, offset = 3,
-                               plotOutput("Class_AccumulationPlot"))
-                      ),
-                      fluidRow(
-                      column('', width = 2, offset = 2,
-                             numericInput('king_predictSamples',
-                                          "Number of samples for prediction:",
-                                          value = 1000,
-                                          min = 1,
-                                          max = 100000)
-                      ),
-                      column('', width = 2, offset = 2,
-                             numericInput('class_predictSamples',
-                                          "Number of samples for prediction:",
-                                          value = 1000,
-                                          min = 1,
-                                          max = 100000)
-                      )
-                      ),
-                      fluidRow(
-                        column("", width = 3,
-                               plotOutput("Kingdom_AccumulationPlot_predict")),
-                        column("", width = 3, offset = 3,
-                               plotOutput("Class_AccumulationPlot_predict"))
-                      )
-                      )
-                      ),
+                      sidebarLayout(
+                        sidebarPanel(width = 3,
+                                     verticalLayout("Select a kindgom of organisms",
+                                       selectInput('kingdomSpp',
+                                                   label = "Select a Kingdom",
+                                                  # choices = c("Animalia","Plantae","Fungi","Protozoa","Bacteria","Chromista","Archaea","Viruses"),
+                                                   choices = c("Animalia","Plantae","Fungi"),
+                                                   selected = "Animalia")),
+                                     
+                                       plotOutput("VT_Kingdom_thermometer")
+                                     ),
+                        mainPanel(
+                         
+                          div(class="cummulplot", tags$head(includeCSS("vt_dashboard.css")),
+                              plotOutput("Kingdom_AccumulationPlot_predict")
+                              )
+                              
+                              
+                          )
+                        )
+             ),
+                     # mainPanel(
+                     #   fluidRow(
+                     #     column("", width = 2,
+                      #           selectInput('kingdomSpp',
+                       #                      label = "Select a Kingdom",
+                      #                       choices = c("Animalia","Plantae","Fungi","Protozoa","Bacteria","Chromista","Archaea","Viruses"),
+                      #                       selected = "Animalia")),
+                          #column("", width = 8, offset = 4,
+                          #       selectInput('classSpp',
+                          #                   label = "Select a Class",
+                          #                   choices = class_ABC,
+                          #                   selected = "Aves"))
+                        #  column("",width = 4, offset = 2,
+                        #           plotOutput("VT_Kingdom_thermometer"))
+                       # ),
+                        #fluidRow(
+                       # column("", width = 3,
+                       #        plotOutput("Kingdom_AccumulationPlot")),
+                       # column("", width = 3, offset = 3,
+                       #        plotOutput("Class_AccumulationPlot"))
+                      #),
+                     # fluidRow(
+                     # column('', width = 2, offset = 2,
+                     #        numericInput('king_predictSamples',
+                     #                     "Number of samples for prediction:",
+                     #                     value = 1000,
+                     #                     min = 1,
+                      #                    max = 100000)
+                     # ),
+                    #  column('', width = 2, offset = 2,
+                     #        numericInput('class_predictSamples',
+                     #                     "Number of samples for prediction:",
+                     #                     value = 1000,
+                     #                     min = 1,
+                     #                    max = 100000)
+                      #)
+                     #),
+                     # fluidRow(
+                     #   column("", width = 3,
+                     #          plotOutput("Kingdom_AccumulationPlot_predict")),
+                      #  column("", width = 3, offset = 3,
+                      #         plotOutput("Class_AccumulationPlot_predict"))
+                     # )
+                     # )
+                      #),
                       
              tabPanel("Climate Change"),
              tabPanel("Species on the edge"),
@@ -247,7 +275,7 @@ output$spp_accum <- renderPlot({
        pch = 19, type = "o",
        ylab = "Species", las = 1,
        xlab = "Year",
-       main = "Species Accumulation Curve")
+       main = "Number of species through time")
 })
 
 # RENDER PLOTS
@@ -268,10 +296,14 @@ output$Class_AccumulationPlot <- renderPlot({
 
 output$Kingdom_AccumulationPlot_predict <- renderPlot({
   
+  #plotSppAccum(data_array = kingdom_spp_val,
+  #             sample_array = kingdom_samp_val,
+  #             columnValue = input$kingdomSpp,
+  #             predSamp = input$king_predictSamples)
   plotSppAccum(data_array = kingdom_spp_val,
                sample_array = kingdom_samp_val,
                columnValue = input$kingdomSpp,
-               predSamp = input$king_predictSamples)
+               predSamp = max(kingdom_samp_val[,,input$kingdomSpp]*4))
 })
 
 output$Class_AccumulationPlot_predict <- renderPlot({
@@ -282,7 +314,48 @@ output$Class_AccumulationPlot_predict <- renderPlot({
                predSamp = input$class_predictSamples)
 })
 
-output$plot1 <- renderPlot({plot(rnorm(100))})
+output$VT_Kingdom_thermometer <- renderPlot({
+  # create polygon # 
+
+  obs_pred_diff <- predictNumSpp(data_array = kingdom_spp_val,
+                                 sample_array = kingdom_samp_val,
+                                 columnValue = input$kingdomSpp,
+                                 predSamp = max(kingdom_samp_val[,,input$kingdomSpp]*4))
+  # Here are some values to use for the polygon creation 
+  # xmin, ymin, xmax, ymax
+  # calculate total area and our 30% value
+  totalArea <- sf::st_area(VTshape)
+  thirtyPC <- totalArea * obs_pred_diff$perObs
+  
+  # Plot it
+  plot(st_geometry(VTshape), col = 'lightgrey', border = 'darkgrey',reset=F,
+       main = paste0(round(obs_pred_diff$perObs,2)*100,"% of ",input$kingdomSpp," observed"))
+  
+  # Find the bounding box of the feature
+  bbox <- st_bbox(VTshape)
+  
+  thisArea <- totalArea - totalArea # zero with correct units
+  
+  i <- 1
+  increment <- 0.1
+  
+  # While our subarea is less than assigned percentage..
+  while (thisArea < thirtyPC) {
+    
+    # Starting at bottom, create a bounding box that is smaller than full bounding box
+    thisBBox <- bbox
+    thisBBox['ymax'] <- thisBBox$ymin + (increment * i)
+    
+    # Clip shp to this bounding box
+    thisSubarea <- suppressMessages(st_crop(VTshape, y=thisBBox))
+    thisArea <- suppressMessages(st_area(thisSubarea))
+    
+    i <- i + 1
+    
+  }
+  plot(st_geometry(thisSubarea), max.plot=1, add=T, col='red', border=NA)
+  legend("bottomright", legend = c("Observed","Unobserved"),fill = c("red","lightgray"),bty="n", title = "Species")
+})
 
 # RENDER MAPS
 #generate a map

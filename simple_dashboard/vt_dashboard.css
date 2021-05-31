@@ -19,6 +19,16 @@ div.outer {
   padding: 0px;
 }
 
+div.cummulplot {
+  position: fixed;
+  top: 200px;
+  left: 500px;
+  right: 200px;
+  bottom: 10px;
+  overflow: hidden;
+  padding: 0px;
+}
+
 div.leftpanel {
   position: fixed;
   top: 75px;
