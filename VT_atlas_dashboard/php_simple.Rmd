@@ -1,0 +1,23 @@
+---
+title: "Untitled"
+output: html_document
+---
+<div>
+<?php 
+/** connect to the dashboard server **/ 
+$dash_conn = 'dbname=gis host=dashboard-db.vtatlasoflife.org port=6543 user=readonly password=webaccess';
+$dbconn = pg_connect($dash_conn);
+if (!$dbconn ) {
+  echo "An error occurred.\n";
+  exit;
+}
+$sql = "
+SELECT COUNT DISTINCT 'gbifID'
+FROM occurrence;"
+$result = pg_query($dash_conn,$sql)
+$row = pg_fetch_row($result)
+pg_free_result($result)
+if($row == false) echo 'hello world';
+echo pg_unescape_bytea($row[0])
+?>
+</div>

@@ -1,0 +1,1566 @@
+---
+title: "VT Atlas of Life"
+output: 
+  flexdashboard::flex_dashboard:
+    orientation: columns
+    vertical_layout: fill
+    social: ["twitter","facebook"]
+    theme:
+      version: 4
+      navbar-bg: "#228B22"
+runtime: shiny
+---
+
+```{r global, include=FALSE}
+library(flexdashboard)
+library(shiny)
+library(shinydashboard)
+library(shinythemes)
+library(raster)
+library(sf)
+library(gdalUtils)
+library(DBI)
+library(RPostgres)
+library(rpostgis)
+library(dplyr)
+library(dbplyr)
+library(VTatlas)
+library(mapview)
+library(leaflet)
+library(leafpop)
+library(shinyWidgets)
+library(lwgeom)
+library(qdap)
+library(shinycssloaders)
+library(DT)
+
+
+################################################################################
+#                                                                              #
+#                           Data for the front page                            #
+#                                                                              #
+################################################################################
+VTshape <- sf::st_read("input_data/VTboundary.shp")
+
+VTcenter <- sf::st_centroid(VTshape)
+
+num_spp <- read.csv("input_data/num_spp.csv")
+
+num_obs <- read.csv("input_data/num_obs.csv")
+
+tot_obs <- read.csv("input_data/tot_obs.csv")
+
+county_class_sf <- sf::st_read("input_data/county_class_sf.shp", quiet = TRUE)
+
+names(county_class_sf) <- c("County","Total_observations","Total_spp",
+                            "Animalia","Plantae","Fungi",
+                            "Protozoa","Bacteria","Chromista","Archaea",
+                            "Viruses","incertae.sedis","geometry")
+
+block_class_sf <- sf::st_read("input_data/block_class_sf.shp", quiet = TRUE)
+
+names(block_class_sf) <- c("Survey_Block","Total_observations","Total_spp",
+                           "Animalia","Plantae",
+                           "Fungi","Protozoa","Bacteria","Chromista","Archaea",
+                           "Viruses","incertae.sedis","geometry")
+
+
+towns_class_sf <- sf::st_read("input_data/towns_class_sf.shp", quiet = TRUE)
+
+names(towns_class_sf) <- c("Town","Total_observations","Total_spp","Animalia",
+                           "Plantae","Fungi",
+                           "Protozoa","Bacteria","Chromista","Archaea",
+                           "Viruses","incertae.sedis","geometry")
+
+sppCumm <- read.csv("input_data/sppCumm.csv")
+
+date_of_data_acquisition <- file.info("input_data/num_spp.csv")$ctime
+
+data_citation <- readLines("input_data/data_citation.R")
+
+# read in class information 
+overall_classes <- read.csv("input_data/summary_of_species_classes.csv")
+
+# remove rows without class information
+overall_classes <- overall_classes[overall_classes$class!="",]
+
+names(overall_classes) <- c("row","Class","Kingdom","Species observed")
+
+summarizeAnimals <- overall_classes[overall_classes$Kingdom=="Animalia",]
+
+summarizeAnimals <- head(
+                     summarizeAnimals[order(summarizeAnimals$"Species observed",
+                                            decreasing = TRUE),],
+                     n = 10)
+
+summarizePlants <- overall_classes[overall_classes$Kingdom=="Plantae",]
+
+summarizePlants <- head(
+                     summarizePlants[order(summarizePlants$"Species observed",
+                                         decreasing = TRUE),],
+                   n=10)
+
+
+####  SPECIES ACCUMULATION ######## 
+
+all_taxa_sac <- readRDS("input_data/all_taxa_speciesAccum_model.rds")
+uniqueSampleSites <- readRDS("input_data/unique_sampling_sites_spp_accum.rds")
+SppAccumPredict <- readRDS("input_data/AllSppAccumPredict.rds")
+
+
+###################### GRAPHICAL COLORS, Etc ###################################
+
+# species accumulation curves 
+# need 9 colors for the different prediction models 
+# these need to be rgb to set alpha for overlap 
+# https://www.rapidtables.com/web/color/RGB_Color.html
+alpha_accum <- 155
+accum_colors <- c(rgb(255,204,204,alpha_accum,max = 255), #rosy pinkish
+                  rgb(255,229,204,alpha_accum,max = 255), #light orangey
+                  rgb(255,255,204,alpha_accum,max = 255), #light yellow
+                  rgb(229,255,204,alpha_accum,max = 255), # light green
+                  rgb(204,255,204,alpha_accum,max = 255), # light greenish
+                  rgb(204,255,229,alpha_accum,max = 255), # greenish blue
+                  rgb(204,255,255,alpha_accum,max = 255), # light blue
+                  rgb(204,229,255,alpha_accum,max = 255), # bluish purple
+                  rgb(204,204,255,alpha_accum,max = 255), # purpleish
+                  rgb(150,150,150,alpha_accum,max = 255)) # grayish
+
+################################################################################
+#
+# THIS PORTION OF THE SCRIPT DEALS WITH SPECIES DISTRIBUTIONS 
+#
+################################################################################
+kingdom_spp <- readRDS("input_data/spp_kingdom_order.rds")
+
+sdm_db_current <- DBI::dbConnect(RPostgres::Postgres(),
+                          dbname = 'vt-sdm-current',
+                          host = 'dashboard-db.vtatlasoflife.org',
+                          port = 6543, # or any other port specified by your DBA
+                          user = "readonly",
+                          password = "webaccess")
+
+sppAvail <- DBI::dbListTables(sdm_db_current)
+
+# disconnect the server 
+DBI::dbDisconnect(sdm_db_current)
+
+sppNames <- readRDS("input_data/species_selection.rds")
+
+# take out the spatial table names # 
+sppAvail <- sppAvail[!(sppAvail %in% c("spatial_ref_sys","geography_columns",
+                                     "geometry_columns","raster_columns",
+                                     "raster_overviews","layer","topology"))]
+AvailSppNames <- sppAvail
+
+AvailSppNames <- unique(AvailSppNames)
+
+sppNames <- sppNames[sppNames$species_select %in% AvailSppNames,]
+
+currentDists_avail <- AvailSppNames # grep(sppAvail, pattern = "_current", value = TRUE)
+futureDists_avail <- AvailSppNames # grep(sppAvail, pattern = "_future", value = TRUE)
+
+# climateModels <- readRDS("input_data/climatemodels.rds")
+
+climateModels <- data.frame(expand.grid("e",c("26","45","70","85"), c("2011","2041","2071")))
+    
+climateModels <- paste(climateModels[,"Var1"],
+                            climateModels[,"Var2"],
+                            climateModels[,"Var3"],
+                            sep = "_")
+    
+#### 
+basemap <- mapview(VTshape, col.regions = "snow")   
+
+current_species_richness <- readRDS("input_data/species_richness_current.rds")
+
+baserichness <- mapview(current_species_richness,
+                        method = "ngb",
+                        na.col = "transparent",
+                        col.regions = viridis::inferno(2750))
+```
+
+# Home {data-icon="fa-list"}
+
+## Column {.sidebar}
+
+<br> <br>
+
+<h3>
+
+Welcome to the Vermont Atlas of Life's Dashboard
+
+</h3>
+
+
+The data displayed on this website were generated by community
+scientists that submitted wildlife observations to either iNaturalist,
+eBird, eButterfly, or are from museum specimens collected within
+Vermont. <br>
+
+<h4>
+
+What's this dashboard all about?
+
+</h4>
+
+## Column {data-width="800"}
+
+The map below shows all observations submitted to community science
+platforms such as iNaturalist, eBird, eButterfly.
+
+```{r HomePageFigure, out.width = '95%', out.height='95%'}
+#https://data-blog.gbif.org/post/gbif-maps-api-using-r-and-leaflet/
+
+# need to define new projection. Only this projection will work with custom queries. 
+epsg4326 <- leafletCRS(crsClass = "L.CRS.EPSG4326", code = "EPSG:4326",
+            proj4def = "+proj=longlat +datum=WGS84 +no_defs",
+            resolutions = 2^(10:0),
+            origin =c(0,0)
+            )
+# create the gbif-geyser style raster layer 
+projection <- '4326' # must use this projection code for custom maps
+style <- 'style=gbif-classic' # I think any style will work 
+tileRaster <- paste0('https://tile.gbif.org/',projection,'/omt/{z}/{x}/{y}@1x.png?',style)
+
+prefix = 'https://api.gbif.org/v2/map/occurrence/density/{z}/{x}/{y}@3x.png?'
+style = 'style=purpleYellow.point'
+
+gbiftile = paste0(prefix,style)
+ebirdtile = paste0(prefix,
+                   'style=glacier.point',
+                   "&",'datasetKey=4fa7b334-ce0d-4e88-aaae-2e0c138d049e') # eBird key
+
+iNattile = paste0(prefix,
+                   'style=fire.point',
+                   "&",'datasetKey=50c9509d-22c7-4a22-a47d-8c48425ef4a7') # iNat key
+
+ebutttile <- paste0(prefix,
+                    'style=purpleYellow.point',
+                    "&",'datasetKey=cf3bdc30-370c-48d3-8fff-b587a39d72d6') #eButt key
+
+leaflet(VTshape) %>%
+addProviderTiles("CartoDB.Positron",
+                 group = "baselayer") %>%
+addPolygons(color = "black",
+            fillColor = "transparent",
+            weight = 1, 
+            smoothFactor = 0.5,
+            highlightOptions = highlightOptions(color = "white", 
+                                                weight = 2,
+                                                bringToFront = TRUE)
+           ) %>%
+setView(lng=-73,lat=44,zoom=07) %>% 
+addTiles(urlTemplate=gbiftile,
+         group = "GBIF") %>% 
+addTiles(urlTemplate=ebirdtile,
+         group = "eBird") %>%
+addTiles(urlTemplate=iNattile,
+         group = "iNaturalist") %>%
+addTiles(urlTemplate=ebutttile,
+         group = "eButterfly") %>%
+  
+hideGroup(c("GBIF","eButterfly")) %>%
+
+addLayersControl(
+    baseGroups = c("baselayer"),
+    overlayGroups = c("GBIF","eBird","iNaturalist","eButterfly"),
+    options = layersControlOptions(collapsed = FALSE)
+  )  
+  
+```
+
+```{r FooterHTML, eval = FALSE}
+includeHTML("sample_html.html")
+```
+
+# Spatial overview {data-icon="fa-map"}
+
+## Column {data-width="300"}
+
+<h3 style="color:blue; text-align:center;">
+
+Vermont Atlas of Life \n by the numbers:
+
+</h3>
+
+```{r SimpleStats}
+h4(renderText(paste("Taxa reported:", prettyNum(num_spp, big.mark=",",scientific=FALSE))),align = "center")
+h4(renderText(paste("Total observations:", prettyNum(tot_obs, big.mark=",",scientific=FALSE))),align = "center")
+h4(renderText(paste("Observers:", prettyNum(num_obs, big.mark=",",scientific = FALSE))),align = "center")
+```
+
+```{r PlotSimpleStats}
+renderPlot({
+  par(bty = "l", bg = "white")
+  plot(sppCumm$cum_species~sppCumm$year,
+       pch = 19, type = "o",
+       ylab = "Species", las = 1,
+       xlab = "Year",
+       main = "Number of species through time",
+       col = "gray50")
+  box()
+})
+```
+
+## Row {.tabset .tabset-fade data-width="700"}
+
+### <b>County</b>
+
+```{r CountyMap}
+mapviewOptions(layers.control.pos = "bottomleft", legend.pos = "bottomright")
+                        M1 <- mapview(county_class_sf, 
+                                         layer.name = "Species observed",
+                                         zcol = "Total_spp",
+                                         layers.control.pos = "bottomleft",
+                                         popup = popupTable(county_class_sf, 
+                                                            zcol = c("County",
+                                                                     "Total_observations",
+                                                                     "Total_spp",
+                                                                     "Animalia",
+                                                                     "Plantae",
+                                                                     "Fungi",
+                                                                     "Protozoa",
+                                                                     "Chromista",
+                                                                     "Bacteria",
+                                                                     "Archaea",
+                                                                     "Viruses",
+                                                                     "incertae.sedis")),
+                                         label = "County: Total Species", legend = TRUE)
+M1@map %>% setView(sf::st_coordinates(VTcenter)[,1],
+                   sf::st_coordinates(VTcenter)[,2], zoom = 8)
+```
+
+### <b>Town</b>
+
+```{r TownMap}
+mapviewOptions(layers.control.pos = "bottomleft", legend.pos = "bottomright")
+                     M2 <- mapview(towns_class_sf, 
+                                        layer.name = "Species observed",
+                                        zcol = "Total_spp",
+                                        
+                                        layers.control.pos = "bottomleft",
+                                        popup = popupTable(towns_class_sf, 
+                                                           zcol = c("Town",
+                                                                    "Total_observations",
+                                                                    "Total_spp",
+                                                                    "Animalia",
+                                                                    "Plantae",
+                                                                    "Fungi",
+                                                                    "Protozoa",
+                                                                    "Chromista",
+                                                                    "Bacteria",
+                                                                    "Archaea",
+                                                                    "Viruses",
+                                                                    "incertae.sedis")),
+                                        label = "Town: Total Species", legend = TRUE)
+M2@map %>% setView(sf::st_coordinates(VTcenter)[,1],
+                   sf::st_coordinates(VTcenter)[,2], zoom = 8)
+```
+
+### <b>Survey block </b>
+
+```{r SurveyBlockMap}
+     M3 <- mapview(block_class_sf, 
+            layer.name = "Species observed",
+            zcol = "Total_spp",
+            popup = popupTable(block_class_sf, 
+                               zcol = c("Survey_Block",
+                                        "Total_spp",
+                                        "Total_observations",
+                                        "Animalia",
+                                        "Plantae",
+                                        "Fungi",
+                                        "Protozoa",
+                                        "Chromista",
+                                        "Bacteria",
+                                        "Archaea",
+                                        "Viruses",
+                                        "incertae.sedis")),
+            label = "Survey block: Total species", legend = TRUE)
+
+M3@map %>% setView(sf::st_coordinates(VTcenter)[,1],
+                   sf::st_coordinates(VTcenter)[,2], zoom = 8)
+```
+
+# State of Biodiversity {data-icon="fa-tree"}
+
+## Column {.sidebar}
+
+Select a species accumulation model below to display the data
+
+```{r InputsSppAccum}
+selectInput('SppAccumModel',
+            label = "Select a model",
+            choices = c("arrhenius",
+                        "michaelis",
+                         "gleason",
+                         "gitay",
+                         "lomolino",
+                         "asymp",
+                         "logis",
+                         "gompertz",
+                         "weibull",
+                         "mean (all models)",
+                         "all"),
+           selected = "mean (all models)")
+```
+
+```{r PlotSppAccum}
+renderPlot({
+  # create polygon # 
+  # Here are some values to use for the polygon creation 
+  # xmin, ymin, xmax, ymax
+  # calculate total area and our 30% value
+  pg <- apply(SppAccumPredict,1,quantile, c(0.025,0.25,0.75,0.975), na.rm = TRUE)
+
+  obs_pred_diff <- (max(all_taxa_sac$richness))/mean(pg[,ncol(pg)])
+  totalArea <- sf::st_area(VTshape)
+  thirtyPC <- totalArea * obs_pred_diff
+  
+  # Plot it
+  plot(sf::st_geometry(VTshape), col = 'lightgrey', border = 'darkgrey',reset=F,
+       main = paste0(round(obs_pred_diff,2)*100,"% of all species observed"))
+  
+  # Find the bounding box of the feature
+  bbox <- sf::st_bbox(VTshape)
+  
+  thisArea <- totalArea - totalArea # zero with correct units
+  
+  i <- 1
+  increment <- 0.1
+  
+  # While our subarea is less than assigned percentage..
+  while (thisArea < thirtyPC) {
+    
+    # Starting at bottom, create a bounding box that is smaller than full bounding box
+    thisBBox <- bbox
+    thisBBox['ymax'] <- thisBBox$ymin + (increment * i)
+    
+    # Clip shp to this bounding box
+    thisSubarea <- suppressWarnings(suppressMessages(sf::st_crop(VTshape, y=thisBBox)))
+    thisArea <- suppressWarnings(suppressMessages(sf::st_area(thisSubarea)))
+    
+    i <- i + 1
+    
+  }
+  plot(st_geometry(thisSubarea), max.plot=1, add=T, col='red', border=NA)
+  legend("bottomright", legend = c("Observed","Unobserved"),fill = c("red","lightgray"),bty="n", title = "Species")
+})
+```
+
+## Column {data-width="800"}
+
+### All Species
+
+```{r AllSpeciesTab}
+  renderPlot({
+    
+    if(input$SppAccumModel=="all"){
+
+    par(bty = "l")
+  plot(NA, ylim = c(0,15000),
+           xlim = c(0,300),
+           las = 1,
+           xaxt = "n",
+           xlab = "Observation locations",
+           ylab = "Number of species")
+  ns <- apply(uniqueSampleSites[,c(1,20,40,60,80,100)],2,sum)
+  axis(1, at = c(1,20,40,60,80,100,150,200,250,300),
+       labels = prettyNum(c(ns,max(ns)*1.5,max(ns)*2,max(ns)*2.5,max(ns)*3), big.mark = ","))
+  #add different models to the plot
+  for(i in 1:9){
+    pg <- apply(SppAccumPredict[,,i], 1, quantile, c(0.025,0.25,0.75,0.975), na.rm = TRUE)
+    
+    polygon(x = c(seq(1,300,10),rev(seq(1,300,10))),
+            y = c(pg[1,],rev(pg[4,])),
+            col = accum_colors[i],
+            border = accum_colors[i])
+  }
+ polygon(y = c(all_taxa_sac$richness+all_taxa_sac$sd,
+               rev(all_taxa_sac$richness-all_taxa_sac$sd)),
+         x = c(all_taxa_sac$sites,rev(all_taxa_sac$sites)),
+         col = "gray",
+         border = "gray")
+  points(all_taxa_sac$richness, type = "l")
+  
+  legend(x = 150,y = 7500,
+         legend = c("observed",dimnames(SppAccumPredict)[[3]]),
+         fill = c("gray",accum_colors),
+         bty = "n",
+         title = "Model")
+    
+  }else{
+  
+  par(bty = "l")
+  plot(NA, ylim = c(0,15000),
+           xlim = c(0,300),
+           las = 1,
+           xaxt = "n",
+           xlab = "Observation locations",
+           ylab = "Number of species")
+  ns <- apply(uniqueSampleSites[,c(1,20,40,60,80,100)],2,sum)
+  axis(1, at = c(1,20,40,60,80,100,150,200,250,300),
+       labels = prettyNum(c(ns,max(ns)*1.5,max(ns)*2,max(ns)*2.5,max(ns)*3),
+                          big.mark = ","))
+  #add different models to the plot
+    
+    if(input$SppAccumModel != "mean (all models)"){
+    pg <- apply(SppAccumPredict[,,input$SppAccumModel], 1, quantile, c(0.025,0.25,0.75,0.975), na.rm = TRUE)
+    }else{
+    pg <- apply(SppAccumPredict,1,quantile, c(0.025,0.25,0.75,0.975), na.rm = TRUE)
+    }
+    polygon(x = c(seq(1,300,10),rev(seq(1,300,10))),
+            y = c(pg[1,],rev(pg[4,])),
+            col = accum_colors[ifelse(input$SppAccumModel=="mean (all models)",
+                                      10,
+                                      grep(pattern = input$SppAccumModel,
+                                       dimnames(SppAccumPredict)[[3]]))],
+            border = accum_colors[ifelse(input$SppAccumModel=="mean (all models)",
+                                      10,
+                                      grep(pattern = input$SppAccumModel,
+                                       dimnames(SppAccumPredict)[[3]]))])
+  
+ polygon(y = c(all_taxa_sac$richness+all_taxa_sac$sd,
+               rev(all_taxa_sac$richness-all_taxa_sac$sd)),
+         x = c(all_taxa_sac$sites,rev(all_taxa_sac$sites)),
+         col = "gray",
+         border = "gray")
+  points(all_taxa_sac$richness, type = "l")
+  
+  legend(x = 150,y = 7500,
+         legend = c("observed",dimnames(SppAccumPredict)[[3]]),
+         fill = c("gray",accum_colors),
+         bty = "n",
+         title = "Model")
+  
+}
+})
+```
+
+# Climate Change {data-icon="fa-globe-americas"}
+
+## Column {.sidebar}
+
+The climate projections are based on 30-year climate ensemble
+models. As such, the current time period represents the climate between
+1991-2021. Learn more about the climate projection models provided by
+<a href="https://adaptwest.databasin.org/pages/adaptwest-climatena/" target="blank">AdaptWest</a>
+
+```{r ClimateChangeInputs}
+# 30-year periods: 2011-2040 (the “2020s”); 2041-2070 (the “2050s”); and 2071-2100 (the “2080s”). 
+selectInput('kingdomSelect',
+            label = "Select a kingdom:",
+            choices = unique(sppNames$kingdom),
+            selected = "Animalia")
+
+selectInput('classSelect',
+            "Select organism class:",
+            choices = NULL)
+
+selectInput('orderSelect',
+            "Select organism order:",
+            choices = NULL)
+
+selectInput('sppToMap',
+            "Select a species:",
+            choices = NULL)
+
+selectInput('timePeriod',
+             label = "Time period",
+             choices = NULL)
+
+selectInput('emissionScenario',
+            label = "Emissions Scenario",
+            choices = NULL)
+
+  KINGDOM <- reactive({
+    sppNames[sppNames$kingdom == input$kingdomSelect,]
+  })
+  
+  observeEvent(KINGDOM(), {
+    choices <- unique(KINGDOM()$class)
+    choices <- choices[order(choices)]
+    updateSelectInput(inputId = "classSelect",
+                      choices = choices) 
+  })
+  
+ CLASS <- reactive({
+    req(input$classSelect)
+    filter(KINGDOM(), class == input$classSelect)
+  })
+  observeEvent(CLASS(), {
+   choices <- unique(CLASS()$order)
+   choices <- choices[order(choices)]
+    updateSelectInput(inputId = "orderSelect",
+                      choices = choices)
+  })
+  
+  ORDER <- reactive({
+    req(input$orderSelect)
+    filter(CLASS(), order == input$orderSelect)
+  })
+  observeEvent(ORDER(), {
+   choices <- unique(ORDER()$species_select)
+   choices <- choices[order(choices)]
+    updateSelectInput(inputId = "sppToMap",
+                      choices = c("NA",choices),
+                      selected = "NA")
+  })
+  timeReact <- reactive({
+    req(input$sppToMap)
+    })
+  observeEvent(timeReact(),{
+    updateSelectInput(inputId = "timePeriod",
+                      choices = c("Nothing selected" = "Nothing selected",
+                         "current" = "current",
+                         "2011-2040" = "2011",
+                         "2041-2070" = "2041",
+                         "2071-2100" = "2071"),
+                      selected = "current")
+  })
+
+   observeEvent(timeReact(),{
+    if(input$timePeriod != "current"){
+    updateSelectInput(inputId = "emissionScenario",
+                      choices = c("Nothing selected" = "Nothing selected",
+                                  "2.6" = "26",
+                                  "4.5" = "45",
+                                  "6.0" = "60",
+                                  "8.5" = "85"),
+                      selected = "Nothing Selected")
+      }
+  })
+
+# textOutput("ClimateModelToGet")
+
+
+```
+
+## Column {data-width="800"}
+
+### 
+This tool provides <b>current</b> and <b>future</b>
+species distribution predictions based on different climate
+change scenarios. 
+
+```{r ClimateChangeOutputs}
+output$climateSpp <- renderLeaflet({
+  # NA is default selection - fill with blank VT map if not selected 
+  # so users can see that a map is going to result #
+  
+    if(input$sppToMap=="NA"){basemap@map}else{
+    
+    if(input$timePeriod == "current"){
+      
+      sdm_db_current <- DBI::dbConnect(RPostgres::Postgres(),
+                          dbname = 'vt-sdm-current',
+                          host = 'dashboard-db.vtatlasoflife.org',
+                          port = 6543, # or any other port specified by your DBA
+                          user = "readonly",
+                          password = "webaccess")
+      
+      
+      z1 <- dbGetQuery(sdm_db_current,
+                     paste0('SELECT (gv).val, ST_AsText((gv).geom) geom
+                          FROM (SELECT ST_DumpAsPolygons(rast,1,FALSE) gv
+                          FROM ',input$sppToMap,') outrast
+                          WHERE (gv).val > 0;'))
+      
+     currspp <- sf::st_as_sf(z1, wkt = "geom")
+     
+     st_crs(currspp) <- st_crs("+proj=laea +lat_0=45 +lon_0=-100 +x_0=0 +y_0=0 +datum=WGS84 +units=m +no_defs")
+     
+     currspp <- sf::st_union(currspp)
+     
+     # currspp <- pgGetRast(sdm_db_current,
+     #                    # name = paste0(input$sppToMap,"_current"),
+     #                     name = input$sppToMap,
+     #                     bands = 1)
+      
+      
+      DBI::dbDisconnect(sdm_db_current);
+      
+      #currspp <- mask(currspp, 
+      #                sf::st_transform(VTshape, 
+      #                                sf::st_crs(currspp)))
+      
+      currmap <- mapview(currspp,
+                        # method = "ngb",
+                         z.col = "val",
+                         na.col = "white",
+                         lwd = 0.2,
+                   col.regions = c("white","forestgreen"),
+                   layer.name = input$sppToMap,
+                   alpha.regions = 0.5)
+      
+      currmap@map
+      
+      
+    }else{
+    # this creates the raster to get from the combinations above #
+    if(input$timePeriod != "Nothing Selected" & 
+       input$emissionScenario == "Nothing Selected"){basemap@map}
+      
+    if(input$timePeriod != "Nothing Selected" &
+       input$emissionScenario != "Nothing Selected"){
+      
+    ClimateModelToGet <- paste0("e_",input$emissionScenario,"_",input$timePeriod)
+    
+    BandToGrab <- which(climateModels==ClimateModelToGet)
+    
+    # connect to database 
+    sdm_db_future <- DBI::dbConnect(RPostgres::Postgres(),
+                           dbname = 'vt-sdm-future',
+                           host = 'dashboard-db.vtatlasoflife.org',
+                           port = 6543, # or any other port specified by your DBA
+                           user = "readonly",
+                           password = "webaccess")
+    
+     
+     z1 <- dbGetQuery(sdm_db_future,
+                     paste0('SELECT (gv).val, ST_AsText((gv).geom) geom
+                          FROM (SELECT ST_DumpAsPolygons(rast,',BandToGrab,'1,FALSE) gv
+                          FROM ',input$sppToMap,') outrast
+                          WHERE (gv).val > 0;'))
+     
+     
+     
+     if(is.null(z1)){DBI::dbDisconnect(sdm_db_future);
+                     basemap@map}else{
+                       
+     DBI::dbDisconnect(sdm_db_future);   
+                       
+     futspp <- sf::st_as_sf(z1, wkt = "geom")
+     
+     st_crs(futspp) <- st_crs("+proj=laea +lat_0=45 +lon_0=-100 +x_0=0 +y_0=0 +datum=WGS84 +units=m +no_defs")
+     
+     futspp <- st_intersection(futspp,
+                      sf::st_transform(VTshape, 
+                                      sf::st_crs(futspp)))
+     
+     futspp <- sf::st_union(futspp)
+     
+    #futspp <- pgGetRast(sdm_db_future,
+    #                  name = input$sppToMap,
+    #                  bands = BandToGrab)
+  
+    
+  
+  # futspp <- mask(futspp, 
+  #                     sf::st_transform(VTshape, 
+  #                                    sf::st_crs(futspp)))
+  
+  futmap <- mapview(futspp,
+                    #method = "ngb",
+                    z.col = "val",
+                    col.na = "white",
+               col.regions = c("white","forestgreen"),
+               layer.name = input$sppToMap,
+               alpha.regions = 0.5)
+  
+  futmap@map} 
+     }
+    }
+   }
+  }) 
+  
+# output$ClimateModelToGet <- renderText(paste0("e_",input$emissionScenario,"_",input$timePeriod))
+```
+
+```{r ClimateChangeMap}
+mapviewOutput("climateSpp")
+```
+
+# Species Richness
+
+## Column {.sidebar}
+
+This tool allows users to see where within VT has the highest species richness or
+biodiversity. The data are summarized at a few different levels of organizaton. 
+
+```{r RichnessSelections}
+selectInput('RichnessOrgs',
+            label = "Level of organization:",
+            choices = c("Kingdom",
+                        "Class",
+                        "Order",
+                        "Nothing selected"),
+            selected = "Nothing selected")
+
+selectInput('RichnessLevels',
+            label = "choose a Kingdom, a Class or an Order:",
+            choices = NULL,
+            selected = "    ")
+
+radioButtons("emissionSelect",
+              "Emission scenarios to include:",
+              choiceNames = list(icon("thermometer-quarter"),
+                                 icon("thermometer-half"),
+                                 icon("thermometer-three-quarters"),
+                                 icon("thermometer-full")),
+              choiceValues = list("26","45","70","85"),
+              selected = "85")  
+
+firstOrder <- reactive({
+     req(input$RichnessOrgs)
+})
+
+observeEvent(firstOrder(), {
+  if(input$RichnessOrgs == "Nothing selected"){
+    choices <- "     "
+  }
+      if(input$RichnessOrgs == "Kingdom"){
+   choices <- unique(sppNames$kingdom)
+  }
+  if(input$RichnessOrgs == "Class"){
+   choices <- unique(sppNames$class)
+  }
+  if(input$RichnessOrgs == "Order"){
+   choices <- unique(sppNames$order)
+  }
+    #choices <- unique(firstOrder())
+    choices <- choices[order(choices)]
+    
+    updateSelectInput(inputId = "RichnessLevels",
+                      choices = c("     ",choices),
+                      selected = "     ")
+    })
+
+actionButton("getspprichness", 
+             label = "Get species richness", 
+             icon = icon("globe-americas"),
+             style="color: #fff; background-color: #337ab7; border-color: #2e6da4")
+```
+
+```{r PrintEmissions}
+renderPrint({input$emissionSelect})
+```
+
+<b>Note</b> These maps require a lot of data processing and may be slow to load. 
+
+```{r RichnessCurrentOutputs}
+output$RichnessCurrent <- renderLeaflet({
+  # NA is default selection - fill with blank VT map if not selected 
+  # so users can see that a map is going to result #
+  
+    if(input$RichnessOrgs == "Nothing selected" &
+       input$RichnessLevels == "     "){baserichness@map}else{
+         
+      if(input$RichnessOrgs != "Nothing selected" & !is.null(input$getspprichness) & input$RichnessLevels != "     "){
+      
+        input$getspprichness 
+        
+      richness_db <- DBI::dbConnect(RPostgres::Postgres(),
+                          dbname = 'vt-spp-richness',
+                          host = 'dashboard-db.vtatlasoflife.org',
+                          port = 6543, # or any other port specified by your DBA
+                          user = "readonly",
+                          password = "webaccess")
+      
+      if(input$RichnessOrgs == "Order"){
+        order_richness_names <- readRDS("input_data/order_richness_names.rds")
+        band2get <- which(order_richness_names == input$RichnessLevels)
+      }
+      if(input$RichnessOrgs == "Class"){
+        class_richness_names <- readRDS("input_data/class_richness_names.rds")
+        band2get <- which(class_richness_names == input$RichnessLevels)
+      }
+      if(input$RichnessOrgs == "Kingdom"){
+        kingdom_richness_names <- c("Plantae","Animalia","Fungi","Protozoa")
+        band2get <- which(kingdom_richness_names == input$RichnessLevels)
+      }
+      
+      
+      if(input$RichnessLevels != "-nothing available-"){
+      print('made it here')  
+      richpolys <- dbGetQuery(richness_db,
+                      paste0('SELECT (gv).val, ST_AsText((gv).geom) geom
+                             FROM (SELECT ST_DumpAsPolygons(rast,',band2get,',FALSE) gv
+                                   FROM ',tolower(input$RichnessOrgs),
+                                         '_richness_current',') outrast
+                             WHERE (gv).val > 0;'))
+      
+      x <- st_as_sf(richpolys, wkt = "geom")
+      st_crs(x) <- st_crs("+proj=laea +lat_0=45 +lon_0=-100 +x_0=0 +y_0=0 +datum=WGS84 +units=m +no_defs")
+      
+      x <- sf::st_transform(x, 4326)
+      }
+      bins <- seq(0, 2500, 5)
+      pal <- colorBin("YlOrRd", domain = x$val, bins = bins)
+      
+      DBI::dbDisconnect(richness_db);
+      
+      curr_rich <- x
+    
+      rich_map <- mapview(curr_rich,
+                         z.col = "val",
+                         lwd = 0.2,
+                         color = "gray",
+                        # method = "ngb",
+                         na.col = "white",
+                   #col.regions = c("white","forestgreen"),
+                   layer.name = input$RichnessLevels,
+                   alpha.regions = 0.5)
+      
+      rich_map@map
+      
+      #leaflet(curr_rich) %>% 
+      # addTiles() %>%
+      #  addPolygons(#fillColor = colorFILL[findInterval(curr_rich$val,seqCols)],
+      #              fillColor = ~pal(val),
+      #              weight = 0.2,
+      #              color = "gray",
+      #              smoothFactor = 0.5,
+      # #             fillOpacity = 0.7) %>%
+      # addLegend(pal = pal, 
+      #            values = seq(0, 2500, 100), 
+      #            opacity = 0.7, 
+      #            title = "Number of Species",
+      #           position = "bottomleft")
+      }else{baserichness@map}
+         }
+     })
+```
+
+```{r RichnessWrongTabs, eval = FALSE}
+
+## # # # # THIS CODE RUNS AND WORKS WELL ##### 
+# IT KEEPS THE YEARS SEPARATE ON DIFFERENT TABS #### 
+# # # # # # # # # # # # # # # # # # # # # # # # # # 
+# Grab futures 
+output$future2011 <- renderLeaflet({
+  # NA is default selection - fill with blank VT map if not selected 
+  # so users can see that a map is going to result #
+  
+    if(input$RichnessOrgs == "Nothing selected" &
+       input$RichnessLevels == "     "){baserichness@map}else{
+         
+      if(input$RichnessOrgs != "Nothing selected" & !is.null(input$getspprichness) & input$RichnessLevels != "     "){
+      
+      richness_db <- DBI::dbConnect(RPostgres::Postgres(),
+                          dbname = 'vt-spp-richness',
+                          host = 'dashboard-db.vtatlasoflife.org',
+                          port = 6543, # or any other port specified by your DBA
+                          user = "readonly",
+                          password = "webaccess")
+      
+      if(input$RichnessOrgs == "Order"){
+        order_richness_names <- readRDS("input_data/order_richness_names.rds")
+        band2get <- which(order_richness_names == input$RichnessLevels)
+      }
+      if(input$RichnessOrgs == "Class"){
+        class_richness_names <- readRDS("input_data/class_richness_names.rds")
+        band2get <- which(class_richness_names == input$RichnessLevels)
+      }
+      if(input$RichnessOrgs == "Kingdom"){
+        kingdom_richness_names <- c("Plantae","Animalia","Fungi","Protozoa")
+        band2get <- which(kingdom_richness_names == input$RichnessLevels)
+      }
+      
+      
+      if(input$RichnessLevels != "-nothing available-"){
+      # 2011
+      richpolys <- dbGetQuery(richness_db,
+                      paste0('SELECT (gv).val, ST_AsText((gv).geom) geom
+                             FROM (SELECT ST_DumpAsPolygons(rast,',band2get,',FALSE) gv
+                                   FROM ',tolower(input$RichnessOrgs),
+                                         '_richness_e_',input$emissionSelect,'_2011',') outrast;'))
+      
+      x <- st_as_sf(richpolys, wkt = "geom")
+      st_crs(x) <- st_crs("+proj=laea +lat_0=45 +lon_0=-100 +x_0=0 +y_0=0 +datum=WGS84 +units=m +no_defs")
+      x$val[x$val==0] <- NA
+      if(all(is.na(x$val))){basemap@map}else{
+      sp1 <- mapview(x,
+                     z.col = "val",
+                     lwd = 0.2,
+                     color = "gray",
+                       #  method = "ngb",
+                         na.col = "white",
+                   #col.regions = c("white","forestgreen"),
+                   layer.name = "2011-2040",
+                   alpha.regions = 0.5)
+      
+      sp1@map
+      }
+      }else{baserichness@map}
+     }}})
+
+output$future2041 <- renderLeaflet({
+  # NA is default selection - fill with blank VT map if not selected 
+  # so users can see that a map is going to result #
+  
+    if(input$RichnessOrgs == "Nothing selected" &
+       input$RichnessLevels == "     "){baserichness@map}else{
+         
+      if(input$RichnessOrgs != "Nothing selected" & !is.null(input$getspprichness) & input$RichnessLevels != "     "){
+      
+      richness_db <- DBI::dbConnect(RPostgres::Postgres(),
+                          dbname = 'vt-spp-richness',
+                          host = 'dashboard-db.vtatlasoflife.org',
+                          port = 6543, # or any other port specified by your DBA
+                          user = "readonly",
+                          password = "webaccess")
+      
+      if(input$RichnessOrgs == "Order"){
+        order_richness_names <- readRDS("input_data/order_richness_names.rds")
+        band2get <- which(order_richness_names == input$RichnessLevels)
+      }
+      if(input$RichnessOrgs == "Class"){
+        class_richness_names <- readRDS("input_data/class_richness_names.rds")
+        band2get <- which(class_richness_names == input$RichnessLevels)
+      }
+      if(input$RichnessOrgs == "Kingdom"){
+        kingdom_richness_names <- c("Plantae","Animalia","Fungi","Protozoa")
+        band2get <- which(kingdom_richness_names == input$RichnessLevels)
+      }
+      
+      
+      if(input$RichnessLevels != "-nothing available-"){
+      # 2011
+      richpolys <- dbGetQuery(richness_db,
+                      paste0('SELECT (gv).val, ST_AsText((gv).geom) geom
+                             FROM (SELECT ST_DumpAsPolygons(rast,',band2get,',FALSE) gv
+                                   FROM ',tolower(input$RichnessOrgs),
+                                         '_richness_e_',input$emissionSelect,'_2041',') outrast;'))
+      
+      x <- st_as_sf(richpolys, wkt = "geom")
+      st_crs(x) <- st_crs("+proj=laea +lat_0=45 +lon_0=-100 +x_0=0 +y_0=0 +datum=WGS84 +units=m +no_defs")
+      x$val[x$val==0] <- NA
+      if(all(is.na(x$val))){basemap@map}else{
+      sp1 <- mapview(x,
+                     z.col = "val",
+                     lwd = 0.2,
+                     color = "gray",
+                       #  method = "ngb",
+                         na.col = "white",
+                   #col.regions = c("white","forestgreen"),
+                   layer.name = "2011-2040",
+                   alpha.regions = 0.5)
+      
+      sp1@map
+      }
+      }else{baserichness@map}
+     }}})
+
+output$future2071 <- renderLeaflet({
+  # NA is default selection - fill with blank VT map if not selected 
+  # so users can see that a map is going to result #
+  
+    if(input$RichnessOrgs == "Nothing selected" &
+       input$RichnessLevels == "     "){baserichness@map}else{
+         
+      if(input$RichnessOrgs != "Nothing selected" & !is.null(input$getspprichness) & input$RichnessLevels != "     "){
+      
+      richness_db <- DBI::dbConnect(RPostgres::Postgres(),
+                          dbname = 'vt-spp-richness',
+                          host = 'dashboard-db.vtatlasoflife.org',
+                          port = 6543, # or any other port specified by your DBA
+                          user = "readonly",
+                          password = "webaccess")
+      
+      if(input$RichnessOrgs == "Order"){
+        order_richness_names <- readRDS("input_data/order_richness_names.rds")
+        band2get <- which(order_richness_names == input$RichnessLevels)
+      }
+      if(input$RichnessOrgs == "Class"){
+        class_richness_names <- readRDS("input_data/class_richness_names.rds")
+        band2get <- which(class_richness_names == input$RichnessLevels)
+      }
+      if(input$RichnessOrgs == "Kingdom"){
+        kingdom_richness_names <- c("Plantae","Animalia","Fungi","Protozoa")
+        band2get <- which(kingdom_richness_names == input$RichnessLevels)
+      }
+      
+      
+      if(input$RichnessLevels != "-nothing available-"){
+      # 2011
+      richpolys <- dbGetQuery(richness_db,
+                      paste0('SELECT (gv).val, ST_AsText((gv).geom) geom
+                             FROM (SELECT ST_DumpAsPolygons(rast,',band2get,',FALSE) gv
+                                   FROM ',tolower(input$RichnessOrgs),
+                                         '_richness_e_',input$emissionSelect,'_2071',') outrast;'))
+      
+      x <- st_as_sf(richpolys, wkt = "geom")
+      st_crs(x) <- st_crs("+proj=laea +lat_0=45 +lon_0=-100 +x_0=0 +y_0=0 +datum=WGS84 +units=m +no_defs")
+      x$val[x$val==0] <- NA
+      if(all(is.na(x$val))){basemap@map}else{
+      sp1 <- mapview(x,
+                     z.col = "val",
+                     lwd = 0.2,
+                     color = "gray",
+                       #  method = "ngb",
+                         na.col = "white",
+                   #col.regions = c("white","forestgreen"),
+                   layer.name = "2011-2040",
+                   alpha.regions = 0.5)
+      
+      sp1@map
+      }
+      }else{baserichness@map}
+     }}})
+ 
+ 
+```
+
+```{r RichnessFuturesOutputs}
+# Grab futures 
+output$futures <- renderLeaflet({
+  # NA is default selection - fill with blank VT map if not selected 
+  # so users can see that a map is going to result #
+  
+    if(input$RichnessOrgs == "Nothing selected" &
+       input$RichnessLevels == "     "){baserichness@map}else{
+         
+      if(input$RichnessOrgs != "Nothing selected" & !is.null(input$getspprichness) & input$RichnessLevels != "     "){
+      
+      richness_db <- DBI::dbConnect(RPostgres::Postgres(),
+                          dbname = 'vt-spp-richness',
+                          host = 'dashboard-db.vtatlasoflife.org',
+                          port = 6543, # or any other port specified by your DBA
+                          user = "readonly",
+                          password = "webaccess")
+      
+      if(input$RichnessOrgs == "Order"){
+        order_richness_names <- readRDS("input_data/order_richness_names.rds")
+        band2get <- which(order_richness_names == input$RichnessLevels)
+      }
+      if(input$RichnessOrgs == "Class"){
+        class_richness_names <- readRDS("input_data/class_richness_names.rds")
+        band2get <- which(class_richness_names == input$RichnessLevels)
+      }
+      if(input$RichnessOrgs == "Kingdom"){
+        kingdom_richness_names <- c("Plantae","Animalia","Fungi","Protozoa")
+        band2get <- which(kingdom_richness_names == input$RichnessLevels)
+      }
+      
+      
+      if(input$RichnessLevels != "-nothing available-"){
+      # 2011
+      richpolys <- dbGetQuery(richness_db,
+                      paste0('SELECT (gv).val, ST_AsText((gv).geom) geom
+                             FROM (SELECT ST_DumpAsPolygons(rast,',band2get,',FALSE) gv
+                                   FROM ',tolower(input$RichnessOrgs),
+                                         '_richness_e_',input$emissionSelect,'_2011',') outrast;'))
+      
+      x2011 <- st_as_sf(richpolys, wkt = "geom")
+      st_crs(x2011) <- st_crs("+proj=laea +lat_0=45 +lon_0=-100 +x_0=0 +y_0=0 +datum=WGS84 +units=m +no_defs")
+      x2011$val[x2011$val==0] <- NA
+      
+      # 2041
+      richpolys <- dbGetQuery(richness_db,
+                      paste0('SELECT (gv).val, ST_AsText((gv).geom) geom
+                             FROM (SELECT ST_DumpAsPolygons(rast,',band2get,',FALSE) gv
+                                   FROM ',tolower(input$RichnessOrgs),
+                                         '_richness_e_',input$emissionSelect,'_2041',') outrast;'))
+      
+      x2041 <- st_as_sf(richpolys, wkt = "geom")
+      st_crs(x2041) <- st_crs("+proj=laea +lat_0=45 +lon_0=-100 +x_0=0 +y_0=0 +datum=WGS84 +units=m +no_defs")
+      x2041$val[x2041$val==0] <- NA
+      
+      # 2071
+      richpolys <- dbGetQuery(richness_db,
+                      paste0('SELECT (gv).val, ST_AsText((gv).geom) geom
+                             FROM (SELECT ST_DumpAsPolygons(rast,',band2get,',FALSE) gv
+                                   FROM ',tolower(input$RichnessOrgs),
+                                         '_richness_e_',input$emissionSelect,'_2071',') outrast;'))
+      
+      x2071 <- st_as_sf(richpolys, wkt = "geom")
+      st_crs(x2071) <- st_crs("+proj=laea +lat_0=45 +lon_0=-100 +x_0=0 +y_0=0 +datum=WGS84 +units=m +no_defs")
+      x2071$val[x2071$val==0] <- NA
+      
+      # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
+      # #
+      # #  Plot the richness 
+      # # 
+      # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
+      
+     # richColorVals <- seq(min(c(x2011$val,x2041$val,x2071$val), na.rm = TRUE),
+     #                      max(c(x2011$val,x2041$val,x2071$val), na.rm = TRUE),
+     #                      by = 1)
+      
+     # RichnessColors <- viridis::cividis(n = length(richColorVals))
+      
+      if(all(is.na(x2011$val))){
+        sp1 <- basemap
+        }else{
+      sp1 <- mapview(x2011,
+                     z.col = "val",
+                     #col.regions = RichnessColors[findInterval(x2011$val,richColorVals)],
+                     lwd = 0.2,
+                     color = "gray",
+                       #  method = "ngb",
+                         na.col = "transparent",
+                   #col.regions = c("white","forestgreen"),
+                   layer.name = "2011-2040",
+                   alpha.regions = 0.5)
+      
+       #sp1 <- leaflet(x2011) %>% 
+        #      addTiles() %>%
+        #      addPolygons(fillColor = RichnessColors[findInterval(x2011$val,richColorVals)])
+      
+        }
+      
+      if(all(is.na(x2041$val))){
+        sp2 <- basemap
+      }else{
+      sp2 <- mapview(x2041,
+                     z.col = "val",
+                     #col.regions = RichnessColors[findInterval(x2041$val,richColorVals)],
+                     lwd = 0.2,
+                     color = "gray",
+                       #  method = "ngb",
+                         na.col = "transparent",
+                   #col.regions = c("white","forestgreen"),
+                   layer.name = "2041-2070",
+                   alpha.regions = 0.5)
+      
+      
+      
+      
+      }
+       
+      if(all(is.na(x2071$val))){
+        sp3 <- basemap
+      }else{
+      sp3 <- mapview(x2071,
+                     z.col = "val",
+                     #col.regions = RichnessColors[findInterval(x2071$val,richColorVals)],
+                     lwd = 0.2,
+                     color = "gray",
+                       #  method = "ngb",
+                         na.col = "transparent",
+                   #col.regions = c("white","forestgreen"),
+                   layer.name = "2071-2100",
+                   alpha.regions = 0.5)
+      
+      
+      
+      (sp1+sp2+sp3)@map
+      }
+      }else{baserichness@map}
+     }}
+         })
+```
+## Column {data-width="300"}
+
+### <b>Current </b>
+```{r RichnessPlotCurrent}
+mapviewOutput("RichnessCurrent") # "RichnessCurrent")
+```
+
+## Column {data-width="300"}
+### <b> Future </b>
+```{r RichnessPlotFuture}
+#mapviewOutput("future2011") # "RichnessCurrent")
+mapviewOutput("futures")
+```
+
+# Mission species 
+
+## {.sidebar}
+
+This tool summarizes the Global Biodiversity Information Facility (GBIF.org)
+observations for select species. 
+
+```{r}
+selectInput('TaxaOfInterest',
+            label = "Select a taxon:",
+            choices = c("Lymantria dispar dispar (LDD moth)" = "1820406",
+                        "Lady beetles" = "7782",
+                        "Monarch butterfly" = "5133088",
+                        "West Virginia White" = "5137890",
+                        "Yellow-banded bumblebee" = "1340493",
+                        "Emerald Ash Borer" = "5878492",
+                        "Common Loon" = "2481962",
+                        "Red Oak" = "2880539"),
+            selected = "5133088")
+
+```
+
+##
+
+###
+```{r}
+renderLeaflet({
+# need to define new projection. Only this projection will work with custom queries. 
+epsg4326 <- leafletCRS(crsClass = "L.CRS.EPSG4326", code = "EPSG:4326",
+                       proj4def = "+proj=longlat +datum=WGS84 +no_defs",
+                       resolutions = 2^(10:0),
+                       origin =c(0,0)
+)
+# create the gbif-geyser style raster layer 
+projection <- '4326' # must use this projection code for custom maps
+style <- 'style=gbif-geyser' # I think any style will work 
+tileRaster <- paste0('https://tile.gbif.org/',
+                     projection,
+                     '/omt/{z}/{x}/{y}@2x.png?',
+                     style)
+# create the data layer Note the "adhoc"
+prefix <- 'https://api.gbif.org/v2/map/occurrence/adhoc/{z}/{x}/{y}@4x.png?'
+# make query 
+# style of polygons
+style <- 'style=purpleYellow-noborder.poly&bin=hex&hexPerTile=20'
+# taxon
+
+taxonKey = paste0('taxonKey=',input$TaxaOfInterest)
+familyKey = paste0('familyKey=',input$TaxaOfInterest)
+
+if(nchar(input$TaxaOfInterest)>4){
+tilePolygonsAllYears = paste0(prefix,style,'&',taxonKey) 
+tilePolygons2000s = paste0(prefix,style,'&',taxonKey,'&year>2000')
+tilePolygons2018 = paste0(prefix,style,'&',taxonKey,'&year=2018')
+tilePolygons2019 = paste0(prefix,style,'&',taxonKey,'&year=2019') 
+tilePolygons2020 = paste0(prefix,style,'&',taxonKey,'&year=2020')
+tilePolygons2021 = paste0(prefix,style,'&',taxonKey,'&year=2021') 
+}else{
+tilePolygonsAllYears = paste0(prefix,style,'&',familyKey) 
+tilePolygons2000s = paste0(prefix,style,'&',familyKey,'&year>2000')
+tilePolygons2018 = paste0(prefix,style,'&',familyKey,'&year=2018')
+tilePolygons2019 = paste0(prefix,style,'&',familyKey,'&year=2019') 
+tilePolygons2020 = paste0(prefix,style,'&',familyKey,'&year=2020')
+tilePolygons2021 = paste0(prefix,style,'&',familyKey,'&year=2021')   
+}
+
+# plot the map 
+leaflet(VTshape, options = leafletOptions(crs = epsg4326)) %>%
+  addProviderTiles("CartoDB.Positron",
+                   group = "baselayer") %>%
+  addPolygons(color = "black",
+              fillColor = "transparent",
+              weight = 1, 
+              smoothFactor = 0.5,
+              highlightOptions = highlightOptions(color = "white", 
+                                                  weight = 2,
+                                                  bringToFront = TRUE) 
+  ) %>%
+  setView(lng=-73,lat=44,zoom=07) %>% 
+  addTiles(urlTemplate=tileRaster) %>%
+  addTiles(urlTemplate=tilePolygonsAllYears,
+           group = "All years") %>%
+addTiles(urlTemplate=tilePolygons2000s,
+         group = "2000-2021") %>% 
+addTiles(urlTemplate=tilePolygons2018,
+         group = "2018") %>%
+addTiles(urlTemplate=tilePolygons2019,
+         group = "2019") %>%
+addTiles(urlTemplate=tilePolygons2020,
+         group = "2020") %>%
+addTiles(urlTemplate=tilePolygons2021,
+         group = "2021") %>%  
+hideGroup(c("2000-2021","2018","2019","2020","2021")) %>%
+
+addLayersControl(
+    baseGroups = c("baselayer"),
+    overlayGroups = c("All years","2000-2021","2018","2019","2020","2021"),
+    options = layersControlOptions(collapsed = FALSE)
+  )  
+})
+```
+
+
+# Play with data 
+## Location of interest {.sidebar}
+
+```{r CoordinateInputs}
+numericInput("userLat",
+            "Latitude",
+             value = 43.695,
+             min = 42.72,
+             max = 44.75)
+
+numericInput("userLon",
+            "Longitude",
+             value = -72.319,
+             min = -73.42,
+             max = -71.86)
+
+selectInput("KingClassOrder",
+            "Level of organization:",
+            choices = c("Kingdom" = "kingdom_richness_current",
+                        "Class" = "class_richness_current",
+                        "Order" = "order_richness_current"))
+
+actionButton("GetRichFromCoords",
+             "Get Data for my location")
+```
+
+## 
+```{r CoordinateMap}
+renderLeaflet({
+         leaflet(VTshape) %>%
+         addTiles() %>% 
+         addPolygons(color = "transparent", weight = 1) %>%
+         addMarkers(lng = input$userLon, 
+                    lat = input$userLat, 
+                    layerId = "Input Location")
+})
+
+  observeEvent(input$mymap_marker_click, { 
+    p <- input$map_marker_click
+    print(p)
+  })
+```
+
+## 
+```{r CoordinateRichnessTable}
+richnessResultTable <- eventReactive(input$GetRichFromCoords, {
+                        
+            sdm_db_current <- DBI::dbConnect(RPostgres::Postgres(),
+            dbname = 'vt-spp-richness',
+            host = 'dashboard-db.vtatlasoflife.org',
+            port = 6543, # or any other port specified by your DBA
+            user = "readonly",
+            password = "webaccess")
+                                      
+  nBands <- data.frame(organization = c("kingdom_richness_current",
+                                        "class_richness_current",
+                                        "order_richness_current"),
+                       bands = c(4,38,180))
+  
+  rich_loc <- dbGetQuery(sdm_db_current,
+        paste0('WITH poi AS (
+         SELECT ST_Transform(ST_SetSRID(ST_MakePoint(',input$userLon,",",input$userLat,'), 4326),880001) AS pt
+         )
+         SELECT b, ST_Value(rast,b,poi.pt) as richness
+         FROM ',input$KingClassOrder,' 
+         CROSS JOIN poi
+         CROSS JOIN generate_series(1,',nBands[match(input$KingClassOrder,nBands[,1]),2],') b
+         WHERE ST_Intersects(poi.pt, st_convexhull(rast));'))
+  
+  if(input$KingClassOrder == "kingdom_richness_current"){
+    objnames <- readRDS("input_data/kingodmRichnessNames.rds")
+    z <- data.frame(Kingdom = objnames,
+                    Richness = rich_loc$richness)
+    rich_loc$Kingdom <- objnames}
+  if(input$KingClassOrder == "class_richness_current"){
+    objnames <- readRDS("input_data/classRichnessNames.rds")
+    z <- data.frame(Class = objnames,
+                    Richness = rich_loc$richness)}
+  if(input$KingClassOrder == "order_richness_current"){
+     objnames <- readRDS("input_data/orderRichnessNames.rds")
+     z <- data.frame(Order = objnames,
+                     Richness = rich_loc$richness)}
+      list(R = z[order(z$Richness, decreasing = TRUE),],
+       rich_loc = rich_loc)
+})
+  
+renderDataTable(richnessResultTable()$R)
+                                     
+```
+
+
+# Conservation Portal {data-icon="fa-ruler"}
+
+## Import shapefiles {.sidebar}
+
+<br> Add a shapefile for a region of interest within Vermont. Files with
+the following extensions are needed .shp,.dbf, it's recommended to have
+.prj as well. <br>
+
+```{r ConservationShaplefileInputs}
+fileInput("shp", 
+          "Shapefile Import", 
+          multiple = TRUE, 
+          accept = c('.shp', '.dbf','.sbn', '.sbx', '.shx', '.prj'))
+
+sfuploaded <- eventReactive(input$shp,{
+    req(input$shp)
+    # create a temp directory to store the files
+    tmpdir <- tempdir()
+    # delete that folder after exiting 
+    on.exit(unlink(tmpdir))
+    
+    #filename <- substr(input$shp$name[1],1,nchar(input$shp$name[1])-4)
+    file.copy(input$shp$datapath,file.path(tmpdir,input$shp$name) )
+    upshape <- sf::read_sf(dsn = paste0(tmpdir,"/",input$shp$name[grep(pattern = '.shp', input$shp$name)]),
+                quiet = TRUE)
+    upshape <- sf::st_transform(upshape, 4326)
+  })
+
+selectInput("wants",
+          h3("Select what to return"),
+          choices = c("Observed species",
+                    "Observed richness",
+                    "Number of observations"),
+          selected = "Observed species")
+
+```
+
+## Show map {data-width="400"}
+
+Ideally, on this page users will be able to upload or import spatial
+layers or draw on the map regions of interest to 1) get an 'observed
+species list', a 'species that are likely' and future projections.
+
+```{r ConservationShapefilePlot}
+renderLeaflet({ 
+  M1 <- mapview(VTshape,
+               layer.name = "VT boundry",
+               col.regions = "transparent",
+               alpha.regions = 0.25)
+  M2 <- mapview(sfuploaded(),
+                layer.name = input$shp$name[grep(pattern = '.shp', input$shp$name)],
+                col.regions = "blue"
+                )
+  (M1+M2)@map
+})
+```
+
+<b>Note:</b> These queries take a long time and currently, there visual cues
+that the process is working. This is a work in progress, when finished a table 
+is returned below this message.
+
+```{r ConservationResultTable}
+resultTable <- eventReactive(input$wants,{
+  
+# simplify spatial layer
+sfuploaded_shape <- sf::st_union(sfuploaded())
+
+GBIF_Db <- DBI::dbConnect(RPostgres::Postgres(),
+                         dbname = 'gis',
+                         host = 'dashboard-db.vtatlasoflife.org',
+                         port = 6543, # or any other port specified by your DBA 
+                         user = "readonly",
+                         password = "webaccess")
+
+if(input$wants == "Observed species"){
+ 
+dbGetQuery(GBIF_Db,
+           paste0(
+             'SELECT DISTINCT \"species\"
+             FROM occurrence
+             WHERE st_intersects(occurrence.geometry,\'SRID=4326;',
+             sf::st_as_text(sfuploaded_shape),'\');'))
+}
+if(input$wants == "Observed richness"){
+ 
+dbGetQuery(GBIF_Db,
+           paste0(
+             'SELECT \"order\", COUNT(DISTINCT \"species\")
+             FROM occurrence
+             WHERE st_intersects(occurrence.geometry,\'SRID=4326;',
+             sf::st_as_text(sfuploaded_shape),'\')
+             GROUP BY \"order\";'))
+}
+if(input$wants == "Number of observations"){
+ 
+dbGetQuery(GBIF_Db,
+           paste0(
+             'SELECT COUNT(DISTINCT \"gbifID\")
+             FROM occurrence
+             WHERE st_intersects(occurrence.geometry,\'SRID=4326;',
+             sf::st_as_text(sfuploaded_shape),'\');'))
+}  
+})
+
+renderDataTable(
+                ifelse(input$wants=="Number of observations",
+                       as.numeric(resultTable()),
+                       DT::datatable(resultTable(),
+                options=list(
+                  lengthMenu= list(c(5,25,100,-1), 
+                                   c('5','25','100','All')),
+                  pageLength = 25)
+                )))
+```

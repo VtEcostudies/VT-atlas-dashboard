@@ -1,0 +1,13 @@
+name: Vt_VAL_flexdashboard
+title: Vt_VAL_flexdashboard
+username:
+account: vt-ecostudies-atlas
+server: shinyapps.io
+hostUrl: https://api.shinyapps.io/v1
+appId: 4365543
+bundleId: 4884596
+url: https://vt-ecostudies-atlas.shinyapps.io/Vt_VAL_flexdashboard/
+when: 1628012985.94288
+lastSyncTime: 1628012985.94288
+asMultiple: FALSE
+asStatic: FALSE

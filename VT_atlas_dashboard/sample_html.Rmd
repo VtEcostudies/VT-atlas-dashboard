@@ -1,0 +1,28 @@
+---
+output: html_document
+---
+<style>
+  .sponser-container {
+      background: #F5F5F5;
+      display: flex;
+	  justify-conent: center;
+	  align-items: center;
+	}
+	
+  .sponser-container img {
+      margin-left: 10px;
+	  margin-right: 10px;
+	}
+</style>
+
+<div id="sponser-container">
+<p style="text-align:center;">VERMONT ATLAS OF LIFE PARTNERS</p>
+<div>
+<img src="www/ALA_logo.png" style="width:128px;">
+<img src="www/GBIF-Logo-250x113.png" style="width:128px;">
+<img src="www/iNat.png" style="width:128px;">
+<img src="www/eBird.jpg" style="width:128px;">
+<img src="www/eplv.jpg" style="width:128px;">
+<img src="www/UVMNHM.png" style="width:128px;">
+<img src="www/vfw.png" style="width:64px;">
+</div>
