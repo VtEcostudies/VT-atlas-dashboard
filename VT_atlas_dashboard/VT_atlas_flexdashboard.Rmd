@@ -1266,14 +1266,17 @@ observations for select species.
 ```{r}
 selectInput('TaxaOfInterest',
             label = "Select a taxon:",
-            choices = c("Lymantria dispar dispar (LDD moth)" = "1820406",
+            choices = c("Lymantria dispar (LDD moth)" = "1820406",
                         "Lady beetles" = "7782",
                         "Monarch butterfly" = "5133088",
                         "West Virginia White" = "5137890",
                         "Yellow-banded bumblebee" = "1340493",
                         "Emerald Ash Borer" = "5878492",
                         "Common Loon" = "2481962",
-                        "Red Oak" = "2880539"),
+                        "Red Oak" = "2880539",
+                        "Eastern Meadowlark" = "2484254",
+                        "Bobolink" = "2484417",
+                        "Common Green Darner" = "5051741"),
             selected = "5133088")
 
 ```
@@ -1302,6 +1305,7 @@ prefix <- 'https://api.gbif.org/v2/map/occurrence/adhoc/{z}/{x}/{y}@4x.png?'
 # style of polygons
 style <- 'style=purpleYellow-noborder.poly&bin=hex&hexPerTile=20'
 # taxon
+
 
 taxonKey = paste0('taxonKey=',input$TaxaOfInterest)
 familyKey = paste0('familyKey=',input$TaxaOfInterest)
@@ -1387,22 +1391,46 @@ actionButton("GetRichFromCoords",
 
 ## 
 ```{r CoordinateMap}
-renderLeaflet({
+output$RichFromCoordsMap <- renderLeaflet({
+  
+  
          leaflet(VTshape) %>%
          addTiles() %>% 
          addPolygons(color = "transparent", weight = 1) %>%
          addMarkers(lng = input$userLon, 
                     lat = input$userLat, 
-                    layerId = "Input Location")
+                    layerId = "Input Location") %>%
+         flyTo(lng = input$userLon,
+               lat = input$userLat,
+               zoom = 12) %>%
+         setView(lng = input$userLon,
+                 lat = input$userLat,
+                 zoom = 12)
+
 })
 
-  observeEvent(input$mymap_marker_click, { 
-    p <- input$map_marker_click
-    print(p)
+observeEvent(input$RichFromCoordsMap_click, {
+    click <- input$RichFromCoordsMap_click
+    
+    updateNumericInput(inputId = "userLon",
+                       value = round(click$lng,2))
+    
+    updateNumericInput(inputId = "userLat",
+                       value = round(click$lat,2))
+    
+    leafletProxy('RichFromCoordsMap')%>%
+      addMarkers(lng = input$userLon, lat = input$userLat) %>% 
+      setView(lng = input$userLon, lat = input$userLat,
+            zoom = 12)
   })
 ```
 
+```{r}
+leafletOutput("RichFromCoordsMap")
+```
+
 ## 
+
 ```{r CoordinateRichnessTable}
 richnessResultTable <- eventReactive(input$GetRichFromCoords, {
                         
