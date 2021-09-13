@@ -1,0 +1,486 @@
+---
+output: html_document
+runtime: shiny
+---
+
+## Column {.sidebar}
+
+This tool allows users to see where within VT has the highest species richness or
+biodiversity. The data are summarized at a few different levels of organizaton. 
+
+```{r RichnessSelections}
+selectInput('RichnessOrgs',
+            label = "Level of organization:",
+            choices = c("Kingdom",
+                        "Class",
+                        "Order",
+                        "Nothing selected"),
+            selected = "Nothing selected")
+
+selectInput('RichnessLevels',
+            label = "choose a Kingdom, a Class or an Order:",
+            choices = NULL,
+            selected = "    ")
+
+radioButtons("emissionSelect",
+              "Emission scenarios to include:",
+              choiceNames = list(icon("thermometer-quarter"),
+                                 icon("thermometer-half"),
+                                 icon("thermometer-three-quarters"),
+                                 icon("thermometer-full")),
+              choiceValues = list("26","45","70","85"),
+              selected = "85")  
+
+firstOrder <- reactive({
+     req(input$RichnessOrgs)
+})
+
+observeEvent(firstOrder(), {
+  if(input$RichnessOrgs == "Nothing selected"){
+    choices <- "     "
+  }
+      if(input$RichnessOrgs == "Kingdom"){
+   choices <- unique(sppNames$kingdom)
+  }
+  if(input$RichnessOrgs == "Class"){
+   choices <- unique(sppNames$class)
+  }
+  if(input$RichnessOrgs == "Order"){
+   choices <- unique(sppNames$order)
+  }
+    #choices <- unique(firstOrder())
+    choices <- choices[order(choices)]
+    
+    updateSelectInput(inputId = "RichnessLevels",
+                      choices = c("     ",choices),
+                      selected = "     ")
+    })
+
+actionButton("getspprichness", 
+             label = "Get species richness", 
+             icon = icon("globe-americas"),
+             style="color: #fff; background-color: #337ab7; border-color: #2e6da4")
+```
+
+```{r PrintEmissions}
+renderPrint({input$emissionSelect})
+```
+
+<b>Note</b> These maps require a lot of data processing and may be slow to load. 
+
+```{r RichnessCurrentOutputs}
+output$RichnessCurrent <- renderLeaflet({
+  # NA is default selection - fill with blank VT map if not selected 
+  # so users can see that a map is going to result #
+  
+    if(input$RichnessOrgs == "Nothing selected" &
+       input$RichnessLevels == "     "){baserichness@map}else{
+         
+      if(input$RichnessOrgs != "Nothing selected" & !is.null(input$getspprichness) & input$RichnessLevels != "     "){
+      
+        input$getspprichness 
+        
+      richness_db <- DBI::dbConnect(RPostgres::Postgres(),
+                          dbname = 'vt-spp-richness',
+                          host = 'dashboard-db.vtatlasoflife.org',
+                          port = 6543, # or any other port specified by your DBA
+                          user = "readonly",
+                          password = "webaccess")
+      
+      if(input$RichnessOrgs == "Order"){
+        order_richness_names <- readRDS("input_data/order_richness_names.rds")
+        band2get <- which(order_richness_names == input$RichnessLevels)
+      }
+      if(input$RichnessOrgs == "Class"){
+        class_richness_names <- readRDS("input_data/class_richness_names.rds")
+        band2get <- which(class_richness_names == input$RichnessLevels)
+      }
+      if(input$RichnessOrgs == "Kingdom"){
+        kingdom_richness_names <- c("Plantae","Animalia","Fungi","Protozoa")
+        band2get <- which(kingdom_richness_names == input$RichnessLevels)
+      }
+      
+      
+      if(input$RichnessLevels != "-nothing available-"){
+      print('made it here')  
+      richpolys <- dbGetQuery(richness_db,
+                      paste0('SELECT (gv).val, ST_AsText((gv).geom) geom
+                             FROM (SELECT ST_DumpAsPolygons(rast,',band2get,',FALSE) gv
+                                   FROM ',tolower(input$RichnessOrgs),
+                                         '_richness_current',') outrast
+                             WHERE (gv).val > 0;'))
+      
+      x <- st_as_sf(richpolys, wkt = "geom")
+      st_crs(x) <- st_crs("+proj=laea +lat_0=45 +lon_0=-100 +x_0=0 +y_0=0 +datum=WGS84 +units=m +no_defs")
+      
+      x <- sf::st_transform(x, 4326)
+      }
+      bins <- seq(0, 2500, 5)
+      pal <- colorBin("YlOrRd", domain = x$val, bins = bins)
+      
+      DBI::dbDisconnect(richness_db);
+      
+      curr_rich <- x
+    
+      rich_map <- mapview(curr_rich,
+                         z.col = "val",
+                         lwd = 0.2,
+                         color = "gray",
+                        # method = "ngb",
+                         na.col = "white",
+                   #col.regions = c("white","forestgreen"),
+                   layer.name = input$RichnessLevels,
+                   alpha.regions = 0.5)
+      
+      rich_map@map
+      
+      #leaflet(curr_rich) %>% 
+      # addTiles() %>%
+      #  addPolygons(#fillColor = colorFILL[findInterval(curr_rich$val,seqCols)],
+      #              fillColor = ~pal(val),
+      #              weight = 0.2,
+      #              color = "gray",
+      #              smoothFactor = 0.5,
+      # #             fillOpacity = 0.7) %>%
+      # addLegend(pal = pal, 
+      #            values = seq(0, 2500, 100), 
+      #            opacity = 0.7, 
+      #            title = "Number of Species",
+      #           position = "bottomleft")
+      }else{baserichness@map}
+         }
+     })
+```
+
+```{r RichnessWrongTabs, eval = FALSE}
+
+## # # # # THIS CODE RUNS AND WORKS WELL ##### 
+# IT KEEPS THE YEARS SEPARATE ON DIFFERENT TABS #### 
+# # # # # # # # # # # # # # # # # # # # # # # # # # 
+# Grab futures 
+output$future2011 <- renderLeaflet({
+  # NA is default selection - fill with blank VT map if not selected 
+  # so users can see that a map is going to result #
+  
+    if(input$RichnessOrgs == "Nothing selected" &
+       input$RichnessLevels == "     "){baserichness@map}else{
+         
+      if(input$RichnessOrgs != "Nothing selected" & !is.null(input$getspprichness) & input$RichnessLevels != "     "){
+      
+      richness_db <- DBI::dbConnect(RPostgres::Postgres(),
+                          dbname = 'vt-spp-richness',
+                          host = 'dashboard-db.vtatlasoflife.org',
+                          port = 6543, # or any other port specified by your DBA
+                          user = "readonly",
+                          password = "webaccess")
+      
+      if(input$RichnessOrgs == "Order"){
+        order_richness_names <- readRDS("input_data/order_richness_names.rds")
+        band2get <- which(order_richness_names == input$RichnessLevels)
+      }
+      if(input$RichnessOrgs == "Class"){
+        class_richness_names <- readRDS("input_data/class_richness_names.rds")
+        band2get <- which(class_richness_names == input$RichnessLevels)
+      }
+      if(input$RichnessOrgs == "Kingdom"){
+        kingdom_richness_names <- c("Plantae","Animalia","Fungi","Protozoa")
+        band2get <- which(kingdom_richness_names == input$RichnessLevels)
+      }
+      
+      
+      if(input$RichnessLevels != "-nothing available-"){
+      # 2011
+      richpolys <- dbGetQuery(richness_db,
+                      paste0('SELECT (gv).val, ST_AsText((gv).geom) geom
+                             FROM (SELECT ST_DumpAsPolygons(rast,',band2get,',FALSE) gv
+                                   FROM ',tolower(input$RichnessOrgs),
+                                         '_richness_e_',input$emissionSelect,'_2011',') outrast;'))
+      
+      x <- st_as_sf(richpolys, wkt = "geom")
+      st_crs(x) <- st_crs("+proj=laea +lat_0=45 +lon_0=-100 +x_0=0 +y_0=0 +datum=WGS84 +units=m +no_defs")
+      x$val[x$val==0] <- NA
+      if(all(is.na(x$val))){basemap@map}else{
+      sp1 <- mapview(x,
+                     z.col = "val",
+                     lwd = 0.2,
+                     color = "gray",
+                       #  method = "ngb",
+                         na.col = "white",
+                   #col.regions = c("white","forestgreen"),
+                   layer.name = "2011-2040",
+                   alpha.regions = 0.5)
+      
+      sp1@map
+      }
+      }else{baserichness@map}
+     }}})
+
+output$future2041 <- renderLeaflet({
+  # NA is default selection - fill with blank VT map if not selected 
+  # so users can see that a map is going to result #
+  
+    if(input$RichnessOrgs == "Nothing selected" &
+       input$RichnessLevels == "     "){baserichness@map}else{
+         
+      if(input$RichnessOrgs != "Nothing selected" & !is.null(input$getspprichness) & input$RichnessLevels != "     "){
+      
+      richness_db <- DBI::dbConnect(RPostgres::Postgres(),
+                          dbname = 'vt-spp-richness',
+                          host = 'dashboard-db.vtatlasoflife.org',
+                          port = 6543, # or any other port specified by your DBA
+                          user = "readonly",
+                          password = "webaccess")
+      
+      if(input$RichnessOrgs == "Order"){
+        order_richness_names <- readRDS("input_data/order_richness_names.rds")
+        band2get <- which(order_richness_names == input$RichnessLevels)
+      }
+      if(input$RichnessOrgs == "Class"){
+        class_richness_names <- readRDS("input_data/class_richness_names.rds")
+        band2get <- which(class_richness_names == input$RichnessLevels)
+      }
+      if(input$RichnessOrgs == "Kingdom"){
+        kingdom_richness_names <- c("Plantae","Animalia","Fungi","Protozoa")
+        band2get <- which(kingdom_richness_names == input$RichnessLevels)
+      }
+      
+      
+      if(input$RichnessLevels != "-nothing available-"){
+      # 2011
+      richpolys <- dbGetQuery(richness_db,
+                      paste0('SELECT (gv).val, ST_AsText((gv).geom) geom
+                             FROM (SELECT ST_DumpAsPolygons(rast,',band2get,',FALSE) gv
+                                   FROM ',tolower(input$RichnessOrgs),
+                                         '_richness_e_',input$emissionSelect,'_2041',') outrast;'))
+      
+      x <- st_as_sf(richpolys, wkt = "geom")
+      st_crs(x) <- st_crs("+proj=laea +lat_0=45 +lon_0=-100 +x_0=0 +y_0=0 +datum=WGS84 +units=m +no_defs")
+      x$val[x$val==0] <- NA
+      if(all(is.na(x$val))){basemap@map}else{
+      sp1 <- mapview(x,
+                     z.col = "val",
+                     lwd = 0.2,
+                     color = "gray",
+                       #  method = "ngb",
+                         na.col = "white",
+                   #col.regions = c("white","forestgreen"),
+                   layer.name = "2011-2040",
+                   alpha.regions = 0.5)
+      
+      sp1@map
+      }
+      }else{baserichness@map}
+     }}})
+
+output$future2071 <- renderLeaflet({
+  # NA is default selection - fill with blank VT map if not selected 
+  # so users can see that a map is going to result #
+  
+    if(input$RichnessOrgs == "Nothing selected" &
+       input$RichnessLevels == "     "){baserichness@map}else{
+         
+      if(input$RichnessOrgs != "Nothing selected" & !is.null(input$getspprichness) & input$RichnessLevels != "     "){
+      
+      richness_db <- DBI::dbConnect(RPostgres::Postgres(),
+                          dbname = 'vt-spp-richness',
+                          host = 'dashboard-db.vtatlasoflife.org',
+                          port = 6543, # or any other port specified by your DBA
+                          user = "readonly",
+                          password = "webaccess")
+      
+      if(input$RichnessOrgs == "Order"){
+        order_richness_names <- readRDS("input_data/order_richness_names.rds")
+        band2get <- which(order_richness_names == input$RichnessLevels)
+      }
+      if(input$RichnessOrgs == "Class"){
+        class_richness_names <- readRDS("input_data/class_richness_names.rds")
+        band2get <- which(class_richness_names == input$RichnessLevels)
+      }
+      if(input$RichnessOrgs == "Kingdom"){
+        kingdom_richness_names <- c("Plantae","Animalia","Fungi","Protozoa")
+        band2get <- which(kingdom_richness_names == input$RichnessLevels)
+      }
+      
+      
+      if(input$RichnessLevels != "-nothing available-"){
+      # 2011
+      richpolys <- dbGetQuery(richness_db,
+                      paste0('SELECT (gv).val, ST_AsText((gv).geom) geom
+                             FROM (SELECT ST_DumpAsPolygons(rast,',band2get,',FALSE) gv
+                                   FROM ',tolower(input$RichnessOrgs),
+                                         '_richness_e_',input$emissionSelect,'_2071',') outrast;'))
+      
+      x <- st_as_sf(richpolys, wkt = "geom")
+      st_crs(x) <- st_crs("+proj=laea +lat_0=45 +lon_0=-100 +x_0=0 +y_0=0 +datum=WGS84 +units=m +no_defs")
+      x$val[x$val==0] <- NA
+      if(all(is.na(x$val))){basemap@map}else{
+      sp1 <- mapview(x,
+                     z.col = "val",
+                     lwd = 0.2,
+                     color = "gray",
+                       #  method = "ngb",
+                         na.col = "white",
+                   #col.regions = c("white","forestgreen"),
+                   layer.name = "2011-2040",
+                   alpha.regions = 0.5)
+      
+      sp1@map
+      }
+      }else{baserichness@map}
+     }}})
+ 
+ 
+```
+
+```{r RichnessFuturesOutputs}
+# Grab futures 
+output$futures <- renderLeaflet({
+  # NA is default selection - fill with blank VT map if not selected 
+  # so users can see that a map is going to result #
+  
+    if(input$RichnessOrgs == "Nothing selected" &
+       input$RichnessLevels == "     "){baserichness@map}else{
+         
+      if(input$RichnessOrgs != "Nothing selected" & !is.null(input$getspprichness) & input$RichnessLevels != "     "){
+      
+      richness_db <- DBI::dbConnect(RPostgres::Postgres(),
+                          dbname = 'vt-spp-richness',
+                          host = 'dashboard-db.vtatlasoflife.org',
+                          port = 6543, # or any other port specified by your DBA
+                          user = "readonly",
+                          password = "webaccess")
+      
+      if(input$RichnessOrgs == "Order"){
+        order_richness_names <- readRDS("input_data/order_richness_names.rds")
+        band2get <- which(order_richness_names == input$RichnessLevels)
+      }
+      if(input$RichnessOrgs == "Class"){
+        class_richness_names <- readRDS("input_data/class_richness_names.rds")
+        band2get <- which(class_richness_names == input$RichnessLevels)
+      }
+      if(input$RichnessOrgs == "Kingdom"){
+        kingdom_richness_names <- c("Plantae","Animalia","Fungi","Protozoa")
+        band2get <- which(kingdom_richness_names == input$RichnessLevels)
+      }
+      
+      
+      if(input$RichnessLevels != "-nothing available-"){
+      # 2011
+      richpolys <- dbGetQuery(richness_db,
+                      paste0('SELECT (gv).val, ST_AsText((gv).geom) geom
+                             FROM (SELECT ST_DumpAsPolygons(rast,',band2get,',FALSE) gv
+                                   FROM ',tolower(input$RichnessOrgs),
+                                         '_richness_e_',input$emissionSelect,'_2011',') outrast;'))
+      
+      x2011 <- st_as_sf(richpolys, wkt = "geom")
+      st_crs(x2011) <- st_crs("+proj=laea +lat_0=45 +lon_0=-100 +x_0=0 +y_0=0 +datum=WGS84 +units=m +no_defs")
+      x2011$val[x2011$val==0] <- NA
+      
+      # 2041
+      richpolys <- dbGetQuery(richness_db,
+                      paste0('SELECT (gv).val, ST_AsText((gv).geom) geom
+                             FROM (SELECT ST_DumpAsPolygons(rast,',band2get,',FALSE) gv
+                                   FROM ',tolower(input$RichnessOrgs),
+                                         '_richness_e_',input$emissionSelect,'_2041',') outrast;'))
+      
+      x2041 <- st_as_sf(richpolys, wkt = "geom")
+      st_crs(x2041) <- st_crs("+proj=laea +lat_0=45 +lon_0=-100 +x_0=0 +y_0=0 +datum=WGS84 +units=m +no_defs")
+      x2041$val[x2041$val==0] <- NA
+      
+      # 2071
+      richpolys <- dbGetQuery(richness_db,
+                      paste0('SELECT (gv).val, ST_AsText((gv).geom) geom
+                             FROM (SELECT ST_DumpAsPolygons(rast,',band2get,',FALSE) gv
+                                   FROM ',tolower(input$RichnessOrgs),
+                                         '_richness_e_',input$emissionSelect,'_2071',') outrast;'))
+      
+      x2071 <- st_as_sf(richpolys, wkt = "geom")
+      st_crs(x2071) <- st_crs("+proj=laea +lat_0=45 +lon_0=-100 +x_0=0 +y_0=0 +datum=WGS84 +units=m +no_defs")
+      x2071$val[x2071$val==0] <- NA
+      
+      # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
+      # #
+      # #  Plot the richness 
+      # # 
+      # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
+      
+     # richColorVals <- seq(min(c(x2011$val,x2041$val,x2071$val), na.rm = TRUE),
+     #                      max(c(x2011$val,x2041$val,x2071$val), na.rm = TRUE),
+     #                      by = 1)
+      
+     # RichnessColors <- viridis::cividis(n = length(richColorVals))
+      
+      if(all(is.na(x2011$val))){
+        sp1 <- basemap
+        }else{
+      sp1 <- mapview(x2011,
+                     z.col = "val",
+                     #col.regions = RichnessColors[findInterval(x2011$val,richColorVals)],
+                     lwd = 0.2,
+                     color = "gray",
+                       #  method = "ngb",
+                         na.col = "transparent",
+                   #col.regions = c("white","forestgreen"),
+                   layer.name = "2011-2040",
+                   alpha.regions = 0.5)
+      
+       #sp1 <- leaflet(x2011) %>% 
+        #      addTiles() %>%
+        #      addPolygons(fillColor = RichnessColors[findInterval(x2011$val,richColorVals)])
+      
+        }
+      
+      if(all(is.na(x2041$val))){
+        sp2 <- basemap
+      }else{
+      sp2 <- mapview(x2041,
+                     z.col = "val",
+                     #col.regions = RichnessColors[findInterval(x2041$val,richColorVals)],
+                     lwd = 0.2,
+                     color = "gray",
+                       #  method = "ngb",
+                         na.col = "transparent",
+                   #col.regions = c("white","forestgreen"),
+                   layer.name = "2041-2070",
+                   alpha.regions = 0.5)
+      
+      
+      
+      
+      }
+       
+      if(all(is.na(x2071$val))){
+        sp3 <- basemap
+      }else{
+      sp3 <- mapview(x2071,
+                     z.col = "val",
+                     #col.regions = RichnessColors[findInterval(x2071$val,richColorVals)],
+                     lwd = 0.2,
+                     color = "gray",
+                       #  method = "ngb",
+                         na.col = "transparent",
+                   #col.regions = c("white","forestgreen"),
+                   layer.name = "2071-2100",
+                   alpha.regions = 0.5)
+      
+      
+      
+      (sp1+sp2+sp3)@map
+      }
+      }else{baserichness@map}
+     }}
+         })
+```
+## Column {data-width="300"}
+
+### <b>Current </b>
+```{r RichnessPlotCurrent}
+mapviewOutput("RichnessCurrent") # "RichnessCurrent")
+```
+
+## Column {data-width="300"}
+### <b> Future </b>
+```{r RichnessPlotFuture}
+#mapviewOutput("future2011") # "RichnessCurrent")
+mapviewOutput("futures")
+```

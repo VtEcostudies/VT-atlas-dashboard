@@ -1,0 +1,108 @@
+---
+output: html_document
+runtime: shiny
+---
+
+## {.sidebar}
+
+This tool summarizes the Global Biodiversity Information Facility (GBIF.org)
+observations for select species. 
+
+```{r}
+selectInput('TaxaOfInterest',
+            label = "Select a taxon:",
+            choices = c("Lymantria dispar (LDD moth)" = "1820406",
+                        "Lady beetles" = "7782",
+                        "Monarch butterfly" = "5133088",
+                        "West Virginia White" = "5137890",
+                        "Yellow-banded bumblebee" = "1340493",
+                        "Emerald Ash Borer" = "5878492",
+                        "Common Loon" = "2481962",
+                        "Red Oak" = "2880539",
+                        "Eastern Meadowlark" = "2484254",
+                        "Bobolink" = "2484417",
+                        "Common Green Darner" = "5051741"),
+            selected = "5133088")
+
+```
+
+##
+
+###
+```{r}
+renderLeaflet({
+# need to define new projection. Only this projection will work with custom queries. 
+epsg4326 <- leafletCRS(crsClass = "L.CRS.EPSG4326", code = "EPSG:4326",
+                       proj4def = "+proj=longlat +datum=WGS84 +no_defs",
+                       resolutions = 2^(10:0),
+                       origin =c(0,0)
+)
+# create the gbif-geyser style raster layer 
+projection <- '4326' # must use this projection code for custom maps
+style <- 'style=gbif-geyser' # I think any style will work 
+tileRaster <- paste0('https://tile.gbif.org/',
+                     projection,
+                     '/omt/{z}/{x}/{y}@2x.png?',
+                     style)
+# create the data layer Note the "adhoc"
+prefix <- 'https://api.gbif.org/v2/map/occurrence/adhoc/{z}/{x}/{y}@4x.png?'
+# make query 
+# style of polygons
+style <- 'style=purpleYellow-noborder.poly&bin=hex&hexPerTile=20'
+# taxon
+
+
+taxonKey = paste0('taxonKey=',input$TaxaOfInterest)
+familyKey = paste0('familyKey=',input$TaxaOfInterest)
+
+if(nchar(input$TaxaOfInterest)>4){
+tilePolygonsAllYears = paste0(prefix,style,'&',taxonKey) 
+tilePolygons2000s = paste0(prefix,style,'&',taxonKey,'&year>2000')
+tilePolygons2018 = paste0(prefix,style,'&',taxonKey,'&year=2018')
+tilePolygons2019 = paste0(prefix,style,'&',taxonKey,'&year=2019') 
+tilePolygons2020 = paste0(prefix,style,'&',taxonKey,'&year=2020')
+tilePolygons2021 = paste0(prefix,style,'&',taxonKey,'&year=2021') 
+}else{
+tilePolygonsAllYears = paste0(prefix,style,'&',familyKey) 
+tilePolygons2000s = paste0(prefix,style,'&',familyKey,'&year>2000')
+tilePolygons2018 = paste0(prefix,style,'&',familyKey,'&year=2018')
+tilePolygons2019 = paste0(prefix,style,'&',familyKey,'&year=2019') 
+tilePolygons2020 = paste0(prefix,style,'&',familyKey,'&year=2020')
+tilePolygons2021 = paste0(prefix,style,'&',familyKey,'&year=2021')   
+}
+
+# plot the map 
+leaflet(VTshape, options = leafletOptions(crs = epsg4326)) %>%
+  addProviderTiles("CartoDB.Positron",
+                   group = "baselayer") %>%
+  addPolygons(color = "black",
+              fillColor = "transparent",
+              weight = 1, 
+              smoothFactor = 0.5,
+              highlightOptions = highlightOptions(color = "white", 
+                                                  weight = 2,
+                                                  bringToFront = TRUE) 
+  ) %>%
+  setView(lng=-73,lat=44,zoom=07) %>% 
+  addTiles(urlTemplate=tileRaster) %>%
+  addTiles(urlTemplate=tilePolygonsAllYears,
+           group = "All years") %>%
+addTiles(urlTemplate=tilePolygons2000s,
+         group = "2000-2021") %>% 
+addTiles(urlTemplate=tilePolygons2018,
+         group = "2018") %>%
+addTiles(urlTemplate=tilePolygons2019,
+         group = "2019") %>%
+addTiles(urlTemplate=tilePolygons2020,
+         group = "2020") %>%
+addTiles(urlTemplate=tilePolygons2021,
+         group = "2021") %>%  
+hideGroup(c("2000-2021","2018","2019","2020","2021")) %>%
+
+addLayersControl(
+    baseGroups = c("baselayer"),
+    overlayGroups = c("All years","2000-2021","2018","2019","2020","2021"),
+    options = layersControlOptions(collapsed = FALSE)
+  )  
+})
+```

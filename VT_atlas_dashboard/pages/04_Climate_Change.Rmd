@@ -1,0 +1,235 @@
+---
+output: html_document
+runtime: shiny
+---
+## Column {.sidebar}
+
+The climate projections are based on 30-year climate ensemble
+models. As such, the current time period represents the climate between
+1991-2021. Learn more about the climate projection models provided by
+<a href="https://adaptwest.databasin.org/pages/adaptwest-climatena/" target="blank">AdaptWest</a>
+
+```{r ClimateChangeInputs}
+# 30-year periods: 2011-2040 (the “2020s”); 2041-2070 (the “2050s”); and 2071-2100 (the “2080s”). 
+selectInput('kingdomSelect',
+            label = "Select a kingdom:",
+            choices = unique(sppNames$kingdom),
+            selected = "Animalia")
+
+selectInput('classSelect',
+            "Select organism class:",
+            choices = NULL)
+
+selectInput('orderSelect',
+            "Select organism order:",
+            choices = NULL)
+
+selectInput('sppToMap',
+            "Select a species:",
+            choices = NULL)
+
+selectInput('timePeriod',
+             label = "Time period",
+             choices = NULL)
+
+selectInput('emissionScenario',
+            label = "Emissions Scenario",
+            choices = NULL)
+
+  KINGDOM <- reactive({
+    sppNames[sppNames$kingdom == input$kingdomSelect,]
+  })
+  
+  observeEvent(KINGDOM(), {
+    choices <- unique(KINGDOM()$class)
+    choices <- choices[order(choices)]
+    updateSelectInput(inputId = "classSelect",
+                      choices = choices) 
+  })
+  
+ CLASS <- reactive({
+    req(input$classSelect)
+    filter(KINGDOM(), class == input$classSelect)
+  })
+  observeEvent(CLASS(), {
+   choices <- unique(CLASS()$order)
+   choices <- choices[order(choices)]
+    updateSelectInput(inputId = "orderSelect",
+                      choices = choices)
+  })
+  
+  ORDER <- reactive({
+    req(input$orderSelect)
+    filter(CLASS(), order == input$orderSelect)
+  })
+  observeEvent(ORDER(), {
+   choices <- unique(ORDER()$species_select)
+   choices <- choices[order(choices)]
+    updateSelectInput(inputId = "sppToMap",
+                      choices = c("NA",choices),
+                      selected = "NA")
+  })
+  timeReact <- reactive({
+    req(input$sppToMap)
+    })
+  observeEvent(timeReact(),{
+    updateSelectInput(inputId = "timePeriod",
+                      choices = c("Nothing selected" = "Nothing selected",
+                         "current" = "current",
+                         "2011-2040" = "2011",
+                         "2041-2070" = "2041",
+                         "2071-2100" = "2071"),
+                      selected = "current")
+  })
+
+   observeEvent(timeReact(),{
+    if(input$timePeriod != "current"){
+    updateSelectInput(inputId = "emissionScenario",
+                      choices = c("Nothing selected" = "Nothing selected",
+                                  "2.6" = "26",
+                                  "4.5" = "45",
+                                  "6.0" = "60",
+                                  "8.5" = "85"),
+                      selected = "Nothing Selected")
+      }
+  })
+
+# textOutput("ClimateModelToGet")
+
+
+```
+
+## Column {data-width="800"}
+
+### 
+This tool provides <b>current</b> and <b>future</b>
+species distribution predictions based on different climate
+change scenarios. 
+
+```{r ClimateChangeOutputs}
+output$climateSpp <- renderLeaflet({
+  # NA is default selection - fill with blank VT map if not selected 
+  # so users can see that a map is going to result #
+  
+    if(input$sppToMap=="NA"){basemap@map}else{
+    
+    if(input$timePeriod == "current"){
+      
+      sdm_db_current <- DBI::dbConnect(RPostgres::Postgres(),
+                          dbname = 'vt-sdm-current',
+                          host = 'dashboard-db.vtatlasoflife.org',
+                          port = 6543, # or any other port specified by your DBA
+                          user = "readonly",
+                          password = "webaccess")
+      
+      
+      z1 <- dbGetQuery(sdm_db_current,
+                     paste0('SELECT (gv).val, ST_AsText((gv).geom) geom
+                          FROM (SELECT ST_DumpAsPolygons(rast,1,FALSE) gv
+                          FROM ',input$sppToMap,') outrast
+                          WHERE (gv).val > 0;'))
+      
+     currspp <- sf::st_as_sf(z1, wkt = "geom")
+     
+     st_crs(currspp) <- st_crs("+proj=laea +lat_0=45 +lon_0=-100 +x_0=0 +y_0=0 +datum=WGS84 +units=m +no_defs")
+     
+     currspp <- sf::st_union(currspp)
+     
+     # currspp <- pgGetRast(sdm_db_current,
+     #                    # name = paste0(input$sppToMap,"_current"),
+     #                     name = input$sppToMap,
+     #                     bands = 1)
+      
+      
+      DBI::dbDisconnect(sdm_db_current);
+      
+      #currspp <- mask(currspp, 
+      #                sf::st_transform(VTshape, 
+      #                                sf::st_crs(currspp)))
+      
+      currmap <- mapview(currspp,
+                        # method = "ngb",
+                         z.col = "val",
+                         na.col = "white",
+                         lwd = 0.2,
+                   col.regions = c("white","forestgreen"),
+                   layer.name = input$sppToMap,
+                   alpha.regions = 0.5)
+      
+      currmap@map
+      
+      
+    }else{
+    # this creates the raster to get from the combinations above #
+    if(input$timePeriod != "Nothing Selected" & 
+       input$emissionScenario == "Nothing Selected"){basemap@map}
+      
+    if(input$timePeriod != "Nothing Selected" &
+       input$emissionScenario != "Nothing Selected"){
+      
+    ClimateModelToGet <- paste0("e_",input$emissionScenario,"_",input$timePeriod)
+    
+    BandToGrab <- which(climateModels==ClimateModelToGet)
+    
+    # connect to database 
+    sdm_db_future <- DBI::dbConnect(RPostgres::Postgres(),
+                           dbname = 'vt-sdm-future',
+                           host = 'dashboard-db.vtatlasoflife.org',
+                           port = 6543, # or any other port specified by your DBA
+                           user = "readonly",
+                           password = "webaccess")
+    
+     
+     z1 <- dbGetQuery(sdm_db_future,
+                     paste0('SELECT (gv).val, ST_AsText((gv).geom) geom
+                          FROM (SELECT ST_DumpAsPolygons(rast,',BandToGrab,'1,FALSE) gv
+                          FROM ',input$sppToMap,') outrast
+                          WHERE (gv).val > 0;'))
+     
+     
+     
+     if(is.null(z1)){DBI::dbDisconnect(sdm_db_future);
+                     basemap@map}else{
+                       
+     DBI::dbDisconnect(sdm_db_future);   
+                       
+     futspp <- sf::st_as_sf(z1, wkt = "geom")
+     
+     st_crs(futspp) <- st_crs("+proj=laea +lat_0=45 +lon_0=-100 +x_0=0 +y_0=0 +datum=WGS84 +units=m +no_defs")
+     
+     futspp <- st_intersection(futspp,
+                      sf::st_transform(VTshape, 
+                                      sf::st_crs(futspp)))
+     
+     futspp <- sf::st_union(futspp)
+     
+    #futspp <- pgGetRast(sdm_db_future,
+    #                  name = input$sppToMap,
+    #                  bands = BandToGrab)
+  
+    
+  
+  # futspp <- mask(futspp, 
+  #                     sf::st_transform(VTshape, 
+  #                                    sf::st_crs(futspp)))
+  
+  futmap <- mapview(futspp,
+                    #method = "ngb",
+                    z.col = "val",
+                    col.na = "white",
+               col.regions = c("white","forestgreen"),
+               layer.name = input$sppToMap,
+               alpha.regions = 0.5)
+  
+  futmap@map} 
+     }
+    }
+   }
+  }) 
+  
+# output$ClimateModelToGet <- renderText(paste0("e_",input$emissionScenario,"_",input$timePeriod))
+```
+
+```{r ClimateChangeMap}
+mapviewOutput("climateSpp")
+```

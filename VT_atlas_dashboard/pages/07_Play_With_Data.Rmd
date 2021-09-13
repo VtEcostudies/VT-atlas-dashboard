@@ -1,0 +1,120 @@
+---
+output: html_document
+runtime: shiny
+---
+## Location of interest {.sidebar}
+
+```{r CoordinateInputs}
+numericInput("userLat",
+            "Latitude",
+             value = 43.695,
+             min = 42.72,
+             max = 44.75)
+
+numericInput("userLon",
+            "Longitude",
+             value = -72.319,
+             min = -73.42,
+             max = -71.86)
+
+selectInput("KingClassOrder",
+            "Level of organization:",
+            choices = c("Kingdom" = "kingdom_richness_current",
+                        "Class" = "class_richness_current",
+                        "Order" = "order_richness_current"))
+
+actionButton("GetRichFromCoords",
+             "Get Data for my location")
+```
+
+## 
+```{r CoordinateMap}
+output$RichFromCoordsMap <- renderLeaflet({
+  
+  
+         leaflet(VTshape) %>%
+         addTiles(group = "baselayer") %>% 
+         addProviderTiles("Esri.WorldImagery",
+                          group = "Satellite") %>%
+         addPolygons(color = "transparent", weight = 1) %>%
+         addMarkers(lng = input$userLon, 
+                    lat = input$userLat, 
+                    layerId = "Input Location") %>%
+         flyTo(lng = input$userLon,
+               lat = input$userLat,
+               zoom = 12) %>%
+         setView(lng = input$userLon,
+                 lat = input$userLat,
+                 zoom = 12)%>%
+      addLayersControl(
+      baseGroups = c("baselayer","Satellite"))
+
+})
+
+observeEvent(input$RichFromCoordsMap_click, {
+    click <- input$RichFromCoordsMap_click
+    
+    updateNumericInput(inputId = "userLon",
+                       value = round(click$lng,2))
+    
+    updateNumericInput(inputId = "userLat",
+                       value = round(click$lat,2))
+    
+    leafletProxy('RichFromCoordsMap')%>%
+      addMarkers(lng = input$userLon, lat = input$userLat) %>% 
+      setView(lng = input$userLon, lat = input$userLat,
+            zoom = 12) 
+  })
+```
+
+```{r}
+leafletOutput("RichFromCoordsMap")
+```
+
+## 
+
+```{r CoordinateRichnessTable}
+richnessResultTable <- eventReactive(input$GetRichFromCoords, {
+                        
+            sdm_db_current <- DBI::dbConnect(RPostgres::Postgres(),
+            dbname = 'vt-spp-richness',
+            host = 'dashboard-db.vtatlasoflife.org',
+            port = 6543, # or any other port specified by your DBA
+            user = "readonly",
+            password = "webaccess")
+                                      
+  nBands <- data.frame(organization = c("kingdom_richness_current",
+                                        "class_richness_current",
+                                        "order_richness_current"),
+                       bands = c(4,38,180))
+  
+  rich_loc <- dbGetQuery(sdm_db_current,
+        paste0('WITH poi AS (
+         SELECT ST_Transform(ST_SetSRID(ST_MakePoint(',input$userLon,",",input$userLat,'), 4326),880001) AS pt
+         )
+         SELECT b, ST_Value(rast,b,poi.pt) as richness
+         FROM ',input$KingClassOrder,' 
+         CROSS JOIN poi
+         CROSS JOIN generate_series(1,',nBands[match(input$KingClassOrder,nBands[,1]),2],') b
+         WHERE ST_Intersects(poi.pt, st_convexhull(rast));'))
+  
+  if(input$KingClassOrder == "kingdom_richness_current"){
+    objnames <- readRDS("input_data/kingodmRichnessNames.rds")
+    z <- data.frame(Kingdom = objnames,
+                    Richness = rich_loc$richness)
+    rich_loc$Kingdom <- objnames}
+  if(input$KingClassOrder == "class_richness_current"){
+    objnames <- readRDS("input_data/classRichnessNames.rds")
+    z <- data.frame(Class = objnames,
+                    Richness = rich_loc$richness)}
+  if(input$KingClassOrder == "order_richness_current"){
+     objnames <- readRDS("input_data/orderRichnessNames.rds")
+     z <- data.frame(Order = objnames,
+                     Richness = rich_loc$richness)}
+      list(R = z[order(z$Richness, decreasing = TRUE),],
+       rich_loc = rich_loc)
+})
+  
+renderDataTable(richnessResultTable()$R)
+                                     
+```

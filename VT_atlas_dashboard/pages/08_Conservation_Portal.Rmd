@@ -1,0 +1,117 @@
+---
+output: html_document
+runtime: shiny
+---
+
+## Import shapefiles {.sidebar}
+
+<br> Add a shapefile for a region of interest within Vermont. Files with
+the following extensions are needed .shp,.dbf, it's recommended to have
+.prj as well. <br>
+
+```{r ConservationShaplefileInputs}
+fileInput("shp", 
+          "Shapefile Import", 
+          multiple = TRUE, 
+          accept = c('.shp', '.dbf','.sbn', '.sbx', '.shx', '.prj'))
+
+sfuploaded <- eventReactive(input$shp,{
+    req(input$shp)
+    # create a temp directory to store the files
+    tmpdir <- tempdir()
+    # delete that folder after exiting 
+    on.exit(unlink(tmpdir))
+    
+    #filename <- substr(input$shp$name[1],1,nchar(input$shp$name[1])-4)
+    file.copy(input$shp$datapath,file.path(tmpdir,input$shp$name) )
+    upshape <- sf::read_sf(dsn = paste0(tmpdir,"/",input$shp$name[grep(pattern = '.shp', input$shp$name)]),
+                quiet = TRUE)
+    upshape <- sf::st_transform(upshape, 4326)
+  })
+
+selectInput("wants",
+          h3("Select what to return"),
+          choices = c("Observed species",
+                    "Observed richness",
+                    "Number of observations"),
+          selected = "Observed species")
+
+```
+
+## Show map {data-width="400"}
+
+Ideally, on this page users will be able to upload or import spatial
+layers or draw on the map regions of interest to 1) get an 'observed
+species list', a 'species that are likely' and future projections.
+
+```{r ConservationShapefilePlot}
+renderLeaflet({ 
+  M1 <- mapview(VTshape,
+               layer.name = "VT boundry",
+               col.regions = "transparent",
+               alpha.regions = 0.25)
+  M2 <- mapview(sfuploaded(),
+                layer.name = input$shp$name[grep(pattern = '.shp', input$shp$name)],
+                col.regions = "blue"
+                )
+  (M1+M2)@map
+})
+```
+
+<b>Note:</b> These queries take a long time and currently, there visual cues
+that the process is working. This is a work in progress, when finished a table 
+is returned below this message.
+
+```{r ConservationResultTable}
+resultTable <- eventReactive(input$wants,{
+  
+# simplify spatial layer
+sfuploaded_shape <- sf::st_union(sfuploaded())
+
+GBIF_Db <- DBI::dbConnect(RPostgres::Postgres(),
+                         dbname = 'gis',
+                         host = 'dashboard-db.vtatlasoflife.org',
+                         port = 6543, # or any other port specified by your DBA 
+                         user = "readonly",
+                         password = "webaccess")
+
+if(input$wants == "Observed species"){
+ 
+dbGetQuery(GBIF_Db,
+           paste0(
+             'SELECT DISTINCT \"species\"
+             FROM occurrence
+             WHERE st_intersects(occurrence.geometry,\'SRID=4326;',
+             sf::st_as_text(sfuploaded_shape),'\');'))
+}
+if(input$wants == "Observed richness"){
+ 
+dbGetQuery(GBIF_Db,
+           paste0(
+             'SELECT \"order\", COUNT(DISTINCT \"species\")
+             FROM occurrence
+             WHERE st_intersects(occurrence.geometry,\'SRID=4326;',
+             sf::st_as_text(sfuploaded_shape),'\')
+             GROUP BY \"order\";'))
+}
+if(input$wants == "Number of observations"){
+ 
+dbGetQuery(GBIF_Db,
+           paste0(
+             'SELECT COUNT(DISTINCT \"gbifID\")
+             FROM occurrence
+             WHERE st_intersects(occurrence.geometry,\'SRID=4326;',
+             sf::st_as_text(sfuploaded_shape),'\');'))
+}  
+})
+
+renderDataTable(
+                ifelse(input$wants=="Number of observations",
+                       as.numeric(resultTable()),
+                       DT::datatable(resultTable(),
+                options=list(
+                  lengthMenu= list(c(5,25,100,-1), 
+                                   c('5','25','100','All')),
+                  pageLength = 25)
+                )))
+```

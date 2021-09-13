@@ -1,0 +1,110 @@
+---
+output: html_document
+runtime: shiny
+---
+## Column {data-width="300"}
+
+<h3 style="color:blue; text-align:center;">
+
+Vermont Atlas of Life \n by the numbers:
+
+</h3>
+
+```{r SimpleStats}
+h4(renderText(paste("Taxa reported:", prettyNum(num_spp, big.mark=",",scientific=FALSE))),align = "center")
+h4(renderText(paste("Total observations:", prettyNum(tot_obs, big.mark=",",scientific=FALSE))),align = "center")
+h4(renderText(paste("Observers:", prettyNum(num_obs, big.mark=",",scientific = FALSE))),align = "center")
+```
+
+```{r PlotSimpleStats}
+renderPlot({
+  par(bty = "l", bg = "white")
+  plot(sppCumm$cum_species~sppCumm$year,
+       pch = 19, type = "o",
+       ylab = "Species", las = 1,
+       xlab = "Year",
+       main = "Number of species through time",
+       col = "gray50")
+  box()
+})
+```
+
+## Row {.tabset .tabset-fade data-width="700"}
+
+### <b>County</b>
+
+```{r CountyMap}
+mapviewOptions(layers.control.pos = "bottomleft", legend.pos = "bottomright")
+                        M1 <- mapview(county_class_sf, 
+                                         layer.name = "Species observed",
+                                         zcol = "Total_spp",
+                                         layers.control.pos = "bottomleft",
+                                         popup = popupTable(county_class_sf, 
+                                                            zcol = c("County",
+                                                                     "Total_observations",
+                                                                     "Total_spp",
+                                                                     "Animalia",
+                                                                     "Plantae",
+                                                                     "Fungi",
+                                                                     "Protozoa",
+                                                                     "Chromista",
+                                                                     "Bacteria",
+                                                                     "Archaea",
+                                                                     "Viruses",
+                                                                     "incertae.sedis")),
+                                         label = "County: Total Species", legend = TRUE)
+M1@map %>% setView(sf::st_coordinates(VTcenter)[,1],
+                   sf::st_coordinates(VTcenter)[,2], zoom = 8)
+```
+
+### <b>Town</b>
+
+```{r TownMap}
+mapviewOptions(layers.control.pos = "bottomleft", legend.pos = "bottomright")
+                     M2 <- mapview(towns_class_sf, 
+                                        layer.name = "Species observed",
+                                        zcol = "Total_spp",
+                                        
+                                        layers.control.pos = "bottomleft",
+                                        popup = popupTable(towns_class_sf, 
+                                                           zcol = c("Town",
+                                                                    "Total_observations",
+                                                                    "Total_spp",
+                                                                    "Animalia",
+                                                                    "Plantae",
+                                                                    "Fungi",
+                                                                    "Protozoa",
+                                                                    "Chromista",
+                                                                    "Bacteria",
+                                                                    "Archaea",
+                                                                    "Viruses",
+                                                                    "incertae.sedis")),
+                                        label = "Town: Total Species", legend = TRUE)
+M2@map %>% setView(sf::st_coordinates(VTcenter)[,1],
+                   sf::st_coordinates(VTcenter)[,2], zoom = 8)
+```
+
+### <b>Survey block </b>
+
+```{r SurveyBlockMap}
+     M3 <- mapview(block_class_sf, 
+            layer.name = "Species observed",
+            zcol = "Total_spp",
+            popup = popupTable(block_class_sf, 
+                               zcol = c("Survey_Block",
+                                        "Total_spp",
+                                        "Total_observations",
+                                        "Animalia",
+                                        "Plantae",
+                                        "Fungi",
+                                        "Protozoa",
+                                        "Chromista",
+                                        "Bacteria",
+                                        "Archaea",
+                                        "Viruses",
+                                        "incertae.sedis")),
+            label = "Survey block: Total species", legend = TRUE)
+
+M3@map %>% setView(sf::st_coordinates(VTcenter)[,1],
+                   sf::st_coordinates(VTcenter)[,2], zoom = 8)
+```

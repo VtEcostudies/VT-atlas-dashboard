@@ -1,0 +1,157 @@
+---
+output: html_document
+runtime: shiny
+---
+
+```{r, message = FALSE, echo = FALSE, include = FALSE}
+
+################################################################################
+#                                                                              #
+#                           Data for the front page                            #
+#                                                                              #
+################################################################################
+VTshape <- sf::st_read("../input_data/VTboundary.shp")
+
+VTcenter <- sf::st_centroid(VTshape)
+
+num_spp <- read.csv("../input_data/num_spp.csv")
+
+num_obs <- read.csv("../input_data/num_obs.csv")
+
+tot_obs <- read.csv("../input_data/tot_obs.csv")
+
+county_class_sf <- sf::st_read("../input_data/county_class_sf.shp", quiet = TRUE)
+
+names(county_class_sf) <- c("County","Total_observations","Total_spp",
+                            "Animalia","Plantae","Fungi",
+                            "Protozoa","Bacteria","Chromista","Archaea",
+                            "Viruses","incertae.sedis","geometry")
+
+block_class_sf <- sf::st_read("../input_data/block_class_sf.shp", quiet = TRUE)
+
+names(block_class_sf) <- c("Survey_Block","Total_observations","Total_spp",
+                           "Animalia","Plantae",
+                           "Fungi","Protozoa","Bacteria","Chromista","Archaea",
+                           "Viruses","incertae.sedis","geometry")
+
+
+towns_class_sf <- sf::st_read("../input_data/towns_class_sf.shp", quiet = TRUE)
+
+names(towns_class_sf) <- c("Town","Total_observations","Total_spp","Animalia",
+                           "Plantae","Fungi",
+                           "Protozoa","Bacteria","Chromista","Archaea",
+                           "Viruses","incertae.sedis","geometry")
+
+sppCumm <- read.csv("../input_data/sppCumm.csv")
+
+date_of_data_acquisition <- file.info("../input_data/num_spp.csv")$ctime
+
+data_citation <- readLines("../input_data/data_citation.R")
+
+# read in class information 
+overall_classes <- read.csv("../input_data/summary_of_species_classes.csv")
+
+# remove rows without class information
+overall_classes <- overall_classes[overall_classes$class!="",]
+
+names(overall_classes) <- c("row","Class","Kingdom","Species observed")
+
+summarizeAnimals <- overall_classes[overall_classes$Kingdom=="Animalia",]
+
+summarizeAnimals <- head(
+                     summarizeAnimals[order(summarizeAnimals$"Species observed",
+                                            decreasing = TRUE),],
+                     n = 10)
+
+summarizePlants <- overall_classes[overall_classes$Kingdom=="Plantae",]
+
+summarizePlants <- head(
+                     summarizePlants[order(summarizePlants$"Species observed",
+                                         decreasing = TRUE),],
+                   n=10)
+
+
+####  SPECIES ACCUMULATION ######## 
+
+all_taxa_sac <- readRDS("../input_data/all_taxa_speciesAccum_model.rds")
+uniqueSampleSites <- readRDS("../input_data/unique_sampling_sites_spp_accum.rds")
+SppAccumPredict <- readRDS("../input_data/AllSppAccumPredict.rds")
+
+
+###################### GRAPHICAL COLORS, Etc ###################################
+
+# species accumulation curves 
+# need 9 colors for the different prediction models 
+# these need to be rgb to set alpha for overlap 
+# https://www.rapidtables.com/web/color/RGB_Color.html
+alpha_accum <- 155
+accum_colors <- c(rgb(255,204,204,alpha_accum,max = 255), #rosy pinkish
+                  rgb(255,229,204,alpha_accum,max = 255), #light orangey
+                  rgb(255,255,204,alpha_accum,max = 255), #light yellow
+                  rgb(229,255,204,alpha_accum,max = 255), # light green
+                  rgb(204,255,204,alpha_accum,max = 255), # light greenish
+                  rgb(204,255,229,alpha_accum,max = 255), # greenish blue
+                  rgb(204,255,255,alpha_accum,max = 255), # light blue
+                  rgb(204,229,255,alpha_accum,max = 255), # bluish purple
+                  rgb(204,204,255,alpha_accum,max = 255), # purpleish
+                  rgb(150,150,150,alpha_accum,max = 255)) # grayish
+
+################################################################################
+#
+# THIS PORTION OF THE SCRIPT DEALS WITH SPECIES DISTRIBUTIONS 
+#
+################################################################################
+kingdom_spp <- readRDS("../input_data/spp_kingdom_order.rds")
+
+sdm_db_current <- DBI::dbConnect(RPostgres::Postgres(),
+                          dbname = 'vt-sdm-current',
+                          host = 'dashboard-db.vtatlasoflife.org',
+                          port = 6543, # or any other port specified by your DBA
+                          user = "readonly",
+                          password = "webaccess")
+
+sppAvail <- DBI::dbListTables(sdm_db_current)
+
+# disconnect the server 
+DBI::dbDisconnect(sdm_db_current)
+
+sppNames <- readRDS("../input_data/species_selection.rds")
+
+# take out the spatial table names # 
+sppAvail <- sppAvail[!(sppAvail %in% c("spatial_ref_sys","geography_columns",
+                                     "geometry_columns","raster_columns",
+                                     "raster_overviews","layer","topology"))]
+AvailSppNames <- sppAvail
+
+AvailSppNames <- unique(AvailSppNames)
+
+sppNames <- sppNames[sppNames$species_select %in% AvailSppNames,]
+
+currentDists_avail <- AvailSppNames # grep(sppAvail, pattern = "_current", value = TRUE)
+futureDists_avail <- AvailSppNames # grep(sppAvail, pattern = "_future", value = TRUE)
+
+# climateModels <- readRDS("input_data/climatemodels.rds")
+
+climateModels <- data.frame(expand.grid("e",c("26","45","70","85"), c("2011","2041","2071")))
+    
+climateModels <- paste(climateModels[,"Var1"],
+                            climateModels[,"Var2"],
+                            climateModels[,"Var3"],
+                            sep = "_")
+    
+#### 
+basemap <- mapview(VTshape, col.regions = "snow")   
+
+current_species_richness <- readRDS("../input_data/species_richness_current.rds")
+
+baserichness <- mapview(current_species_richness,
+                        method = "ngb",
+                        na.col = "transparent",
+                        col.regions = viridis::inferno(2750))
+
+
+lastYrCount <- jsonlite::fromJSON("https://api.gbif.org/v1/occurrence/search?gadmLevel1gid=USA.46_1&year=2020")$count
+thisYrCount <- jsonlite::fromJSON("https://api.gbif.org/v1/occurrence/search?gadmLevel1gid=USA.46_1&year=2021")$count
+```
+
+

@@ -1,0 +1,156 @@
+---
+output: html_document
+runtime: shiny
+---
+## Column {.sidebar}
+
+Select a species accumulation model below to display the data
+
+```{r InputsSppAccum}
+selectInput('SppAccumModel',
+            label = "Select a model",
+            choices = c("arrhenius",
+                        "michaelis",
+                         "gleason",
+                         "gitay",
+                         "lomolino",
+                         "asymp",
+                         "logis",
+                         "gompertz",
+                         "weibull",
+                         "mean (all models)",
+                         "all"),
+           selected = "mean (all models)")
+```
+
+```{r PlotSppAccum}
+renderPlot({
+  # create polygon # 
+  # Here are some values to use for the polygon creation 
+  # xmin, ymin, xmax, ymax
+  # calculate total area and our 30% value
+  pg <- apply(SppAccumPredict,1,quantile, c(0.025,0.25,0.75,0.975), na.rm = TRUE)
+
+  obs_pred_diff <- (max(all_taxa_sac$richness))/mean(pg[,ncol(pg)])
+  totalArea <- sf::st_area(VTshape)
+  thirtyPC <- totalArea * obs_pred_diff
+  
+  # Plot it
+  plot(sf::st_geometry(VTshape), col = 'lightgrey', border = 'darkgrey',reset=F,
+       main = paste0(round(obs_pred_diff,2)*100,"% of all species observed"))
+  
+  # Find the bounding box of the feature
+  bbox <- sf::st_bbox(VTshape)
+  
+  thisArea <- totalArea - totalArea # zero with correct units
+  
+  i <- 1
+  increment <- 0.1
+  
+  # While our subarea is less than assigned percentage..
+  while (thisArea < thirtyPC) {
+    
+    # Starting at bottom, create a bounding box that is smaller than full bounding box
+    thisBBox <- bbox
+    thisBBox['ymax'] <- thisBBox$ymin + (increment * i)
+    
+    # Clip shp to this bounding box
+    thisSubarea <- suppressWarnings(suppressMessages(sf::st_crop(VTshape, y=thisBBox)))
+    thisArea <- suppressWarnings(suppressMessages(sf::st_area(thisSubarea)))
+    
+    i <- i + 1
+    
+  }
+  plot(st_geometry(thisSubarea), max.plot=1, add=T, col='red', border=NA)
+  legend("bottomright", legend = c("Observed","Unobserved"),fill = c("red","lightgray"),bty="n", title = "Species")
+})
+```
+
+## Column {data-width="800"}
+
+### All Species
+
+```{r AllSpeciesTab}
+  renderPlot({
+    
+    if(input$SppAccumModel=="all"){
+
+    par(bty = "l")
+  plot(NA, ylim = c(0,15000),
+           xlim = c(0,300),
+           las = 1,
+           xaxt = "n",
+           xlab = "Observation locations",
+           ylab = "Number of species")
+  ns <- apply(uniqueSampleSites[,c(1,20,40,60,80,100)],2,sum)
+  axis(1, at = c(1,20,40,60,80,100,150,200,250,300),
+       labels = prettyNum(c(ns,max(ns)*1.5,max(ns)*2,max(ns)*2.5,max(ns)*3), big.mark = ","))
+  #add different models to the plot
+  for(i in 1:9){
+    pg <- apply(SppAccumPredict[,,i], 1, quantile, c(0.025,0.25,0.75,0.975), na.rm = TRUE)
+    
+    polygon(x = c(seq(1,300,10),rev(seq(1,300,10))),
+            y = c(pg[1,],rev(pg[4,])),
+            col = accum_colors[i],
+            border = accum_colors[i])
+  }
+ polygon(y = c(all_taxa_sac$richness+all_taxa_sac$sd,
+               rev(all_taxa_sac$richness-all_taxa_sac$sd)),
+         x = c(all_taxa_sac$sites,rev(all_taxa_sac$sites)),
+         col = "gray",
+         border = "gray")
+  points(all_taxa_sac$richness, type = "l")
+  
+  legend(x = 150,y = 7500,
+         legend = c("observed",dimnames(SppAccumPredict)[[3]]),
+         fill = c("gray",accum_colors),
+         bty = "n",
+         title = "Model")
+    
+  }else{
+  
+  par(bty = "l")
+  plot(NA, ylim = c(0,15000),
+           xlim = c(0,300),
+           las = 1,
+           xaxt = "n",
+           xlab = "Observation locations",
+           ylab = "Number of species")
+  ns <- apply(uniqueSampleSites[,c(1,20,40,60,80,100)],2,sum)
+  axis(1, at = c(1,20,40,60,80,100,150,200,250,300),
+       labels = prettyNum(c(ns,max(ns)*1.5,max(ns)*2,max(ns)*2.5,max(ns)*3),
+                          big.mark = ","))
+  #add different models to the plot
+    
+    if(input$SppAccumModel != "mean (all models)"){
+    pg <- apply(SppAccumPredict[,,input$SppAccumModel], 1, quantile, c(0.025,0.25,0.75,0.975), na.rm = TRUE)
+    }else{
+    pg <- apply(SppAccumPredict,1,quantile, c(0.025,0.25,0.75,0.975), na.rm = TRUE)
+    }
+    polygon(x = c(seq(1,300,10),rev(seq(1,300,10))),
+            y = c(pg[1,],rev(pg[4,])),
+            col = accum_colors[ifelse(input$SppAccumModel=="mean (all models)",
+                                      10,
+                                      grep(pattern = input$SppAccumModel,
+                                       dimnames(SppAccumPredict)[[3]]))],
+            border = accum_colors[ifelse(input$SppAccumModel=="mean (all models)",
+                                      10,
+                                      grep(pattern = input$SppAccumModel,
+                                       dimnames(SppAccumPredict)[[3]]))])
+  
+ polygon(y = c(all_taxa_sac$richness+all_taxa_sac$sd,
+               rev(all_taxa_sac$richness-all_taxa_sac$sd)),
+         x = c(all_taxa_sac$sites,rev(all_taxa_sac$sites)),
+         col = "gray",
+         border = "gray")
+  points(all_taxa_sac$richness, type = "l")
+  
+  legend(x = 150,y = 7500,
+         legend = c("observed",dimnames(SppAccumPredict)[[3]]),
+         fill = c("gray",accum_colors),
+         bty = "n",
+         title = "Model")
+  
+}
+})
+```
